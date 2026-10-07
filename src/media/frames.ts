@@ -17,6 +17,8 @@ export class FrameServer {
   private bytes = 0;
   private goal: number[] = [];
   private goalSet = new Set<number>();
+  /** Highest wanted frame; a few frames past it are kept too (see onOutput). */
+  private goalMax = -1;
   private pinned = new Set<number>();
   private waiters = new Map<number, ((b: ImageBitmap | null) => void)[]>();
   private inflight = new Map<number, Promise<void>>();
@@ -75,6 +77,7 @@ export class FrameServer {
     for (const i of indices) if (i >= 0 && i < this.demux.index.count && !seen.has(i)) { seen.add(i); this.goal.push(i); }
     for (const i of this.waiters.keys()) if (!seen.has(i)) { seen.add(i); this.goal.push(i); }
     this.goalSet = seen;
+    this.goalMax = this.goal.length ? Math.max(...this.goal) : -1;
     void this.pump();
   }
 
@@ -119,7 +122,7 @@ export class FrameServer {
 
   private put(idx: number, bmp: ImageBitmap) {
     const old = this.cache.get(idx);
-    if (old) { old.close(); this.bytes -= old.width * old.height * 4; this.cache.delete(idx); }
+    if (old) { this.bytes -= old.width * old.height * 4; old.close(); this.cache.delete(idx); }
     this.cache.set(idx, bmp);
     this.bytes += bmp.width * bmp.height * 4;
     // Progress was made, so earlier restarts were not a decode failure loop.
@@ -134,9 +137,10 @@ export class FrameServer {
     for (const [i, b] of this.cache) {
       if (this.bytes <= this.budget) break;
       if (this.goalSet.has(i) || this.pinned.has(i)) continue;
+      // Size first: a closed bitmap reports 0×0.
+      this.bytes -= b.width * b.height * 4;
       b.close();
       this.cache.delete(i);
-      this.bytes -= b.width * b.height * 4;
     }
   }
 
@@ -153,7 +157,11 @@ export class FrameServer {
     const idx = this.demux.index.byUs.get(us);
     if (idx === undefined) { frame.close(); return; }
     this.seen.add(idx);
-    if (this.cache.has(idx) || this.inflight.has(idx) || !(this.goalSet.has(idx) || this.waiters.has(idx))) {
+    // The decoder hands frames over in bursts, so the frames just past the wanted range
+    // arrive with the last wanted one. Keep them: playback wants them a moment later, and
+    // dropping them would force a re-decode from the keyframe.
+    const ahead = idx > this.goalMax && idx <= this.goalMax + 12;
+    if (this.cache.has(idx) || this.inflight.has(idx) || !(this.goalSet.has(idx) || this.waiters.has(idx) || ahead)) {
       frame.close();
       return;
     }

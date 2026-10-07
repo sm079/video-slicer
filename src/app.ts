@@ -219,7 +219,7 @@ export class App {
     f = Math.max(0, Math.min(total - 1, Math.round(f)));
     if (this.play?.loop) {
       const w = this.win(this.play.loop);
-      if (w && (f < w.start || f >= w.start + w.len)) { this.play = null; this.media?.frames.pin([]); }
+      if (w && (f < w.start || f >= w.start + w.len)) this.stop();
     }
     if (f === this.playhead) return;
     this.playhead = f;
@@ -239,19 +239,25 @@ export class App {
     if (!m) return;
     const { tb, frames } = m;
     const list: number[] = [tb.src(this.playhead)];
-    const cap = frames.capacity - 6;
+    // Prefetch, the frames the decoder emits past it (FrameServer keeps up to 12) and pinned
+    // loop starts must fit the cache together, or eviction forces re-decodes.
+    const cap = frames.capacity;
     if (this.play) {
       const w = this.win(this.play.loop);
       const lo = w ? w.start : 0, hi = w ? w.start + w.len : tb.count;
-      const ahead = Math.min(cap, w && w.len <= cap ? w.len : Math.ceil(tb.fps * 1.5) + 8);
+      const room = Math.max(4, cap - 14);
+      const whole = !!w && w.len <= room;
+      const ahead = whole ? w!.len : Math.min(Math.max(4, Math.floor(room / 2)), Math.ceil(tb.fps * 1.5) + 8);
       for (let i = 1; i < ahead; i++) {
         let f = this.playhead + i;
         if (f >= hi) { if (!w) break; f = lo + (f - lo) % (hi - lo); }
         list.push(tb.src(f));
       }
       if (w) {
+        // Short loops stay cached whole; long ones keep their first frames so the wrap is seamless.
         const pin: number[] = [];
-        for (let f = w.start; f < w.start + Math.min(w.len, cap); f++) pin.push(tb.src(f));
+        const n = whole ? w.len : Math.max(0, room - ahead);
+        for (let f = w.start; f < w.start + n; f++) pin.push(tb.src(f));
         frames.pin(pin);
       }
     } else {
@@ -268,6 +274,7 @@ export class App {
     if (!this.media) return;
     if (this.playhead >= this.total - 1) this.seek(0);
     this.play = { loop: null, nextDue: performance.now() };
+    this.media.thumbs.setPaused(true);
     this.updateWants();
     this.invalidate(true);
   }
@@ -279,6 +286,7 @@ export class App {
     this.select(id);
     this.playhead = w.start;
     this.play = { loop: id, nextDue: performance.now() };
+    this.media.thumbs.setPaused(true);
     this.updateWants();
     this.invalidate(true);
   }
@@ -287,6 +295,7 @@ export class App {
     if (!this.play) return;
     this.play = null;
     this.media?.frames.pin([]);
+    this.media?.thumbs.setPaused(false);
     this.updateWants();
     this.invalidate(true);
   }

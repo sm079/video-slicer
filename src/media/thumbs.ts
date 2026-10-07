@@ -12,6 +12,13 @@ export class ThumbServer {
   private disposed = false;
   private decoder: VideoDecoder | null = null;
   private outputs: Promise<void>[] = [];
+  private paused = false;
+
+  /** Hold off while playing so thumbnails do not compete with playback for the decoder. */
+  setPaused(p: boolean) {
+    this.paused = p;
+    if (!p) void this.run();
+  }
 
   constructor(private demux: Demux, height = 72) {
     const { rawW, rawH } = demux.info;
@@ -68,7 +75,7 @@ export class ThumbServer {
     this.busy = true;
     let errors = 0;
     try {
-      while (this.queue.length && !this.disposed) {
+      while (this.queue.length && !this.disposed && !this.paused) {
         // A few keyframes per flush: every one decodes on its own.
         const batch = this.queue.splice(0, 4);
         try {

@@ -202,7 +202,8 @@ export class Viewer {
     if (bmp) {
       ctx.setTransform(view.multiply(rawToDisplay(m.orient)));
       ctx.imageSmoothingEnabled = view.a < 2;
-      ctx.imageSmoothingQuality = 'high';
+      // Cheaper scaling while playing; a paused frame gets the best filter.
+      ctx.imageSmoothingQuality = app.play ? 'low' : 'high';
       ctx.drawImage(bmp, 0, 0);
     }
     ctx.setTransform(view);
