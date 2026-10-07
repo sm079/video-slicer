@@ -48,8 +48,12 @@ export class Timebase {
   readonly fps: number;
   readonly count: number;
   private readonly map: Int32Array;
+  readonly index: FrameIndex;
+  readonly sourceFps: number;
 
-  constructor(readonly index: FrameIndex, fps: number | null, readonly sourceFps: number) {
+  constructor(index: FrameIndex, fps: number | null, sourceFps: number) {
+    this.index = index;
+    this.sourceFps = sourceFps;
     this.native = fps == null;
     this.fps = fps ?? sourceFps;
     const { pts, first, end } = index;

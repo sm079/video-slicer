@@ -137,7 +137,7 @@ export class FrameServer {
     for (const [i, b] of this.cache) {
       if (this.bytes <= this.budget) break;
       if (this.goalSet.has(i) || this.pinned.has(i)) continue;
-      // Size first: a closed bitmap reports 0×0.
+      // Size first: a closed bitmap reports 0Ã—0.
       this.bytes -= b.width * b.height * 4;
       b.close();
       this.cache.delete(i);

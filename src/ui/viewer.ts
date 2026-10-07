@@ -284,7 +284,11 @@ export class Viewer {
     ctx.font = `${12 * px}px system-ui, sans-serif`;
     const tw = ctx.measureText(label).width;
     const top = pts.reduce((a, b) => (b[1] < a[1] ? b : a));
-    const lx = top[0] - tw / 2, ly = top[1] - 34 * px - ROT_OFFSET * px * 0.2;
+    const lx = top[0] - tw / 2;
+    let ly = top[1] - 34 * px - ROT_OFFSET * px * 0.2;
+    // No room above (crop at the top of the view): put it just inside the crop instead.
+    const viewTop = this.view().inverse().transformPoint(new DOMPoint(0, 0)).y;
+    if (ly - 13 * px < viewTop) ly = top[1] + 20 * px;
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
     ctx.fillRect(lx - 5 * px, ly - 13 * px, tw + 10 * px, 18 * px);
     ctx.fillStyle = '#fff';

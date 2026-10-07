@@ -318,6 +318,7 @@ function fitsOn(a: App, track: string, w: { id: string; start: number; len: numb
 /** The exact output frame for the selected window at the playhead, rendered the way export renders it. */
 export class OutputPreview {
   private ctx: CanvasRenderingContext2D;
+  private asked = -1;
 
   constructor(private canvas: HTMLCanvasElement, private label: HTMLElement, private app: App) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -345,7 +346,8 @@ export class OutputPreview {
     const src = m.tb.src(out_f);
     const bmp = m.frames.get(src);
     if (!bmp) {
-      if (!inside) m.frames.request(src).then(() => a.invalidate());
+      // Outside the window the frame is not in the playhead's prefetch, so ask once.
+      if (!inside && this.asked !== src) { this.asked = src; void m.frames.request(src).then(() => a.invalidate()); }
       this.label.textContent = `${out.w}×${out.h} · decoding…`;
       return;
     }

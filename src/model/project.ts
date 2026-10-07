@@ -248,8 +248,10 @@ export class Store {
   private future: string[] = [];
   private listeners = new Set<() => void>();
   private snapshot: string;
+  data: ProjectData;
 
-  constructor(public data: ProjectData) {
+  constructor(data: ProjectData) {
+    this.data = data;
     this.snapshot = JSON.stringify(data);
   }
 
