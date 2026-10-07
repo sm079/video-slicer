@@ -1,5 +1,6 @@
 import { openVideo, type Demux, type UntaggedColor } from './media/demux';
 import { FrameServer } from './media/frames';
+import { hashFile } from './media/hash';
 import { ThumbServer } from './media/thumbs';
 import { Timebase, detectFps } from './media/timebase';
 import {
@@ -10,6 +11,8 @@ import type { Orientation } from './model/render';
 
 export interface Media {
   file: File;
+  /** Content fingerprint; the key the editor state is saved under. */
+  hash: string;
   demux: Demux;
   tb: Timebase;
   frames: FrameServer;
@@ -28,6 +31,25 @@ interface Play {
 
 const CACHE_KEY = 'vs.cacheMB';
 const COLOR_KEY = 'vs.untaggedColor';
+const STATE_PREFIX = 'vs.state:';
+
+/** Everything restored when the same video is opened again. */
+interface EditorState {
+  version: 1;
+  saved: number;
+  project: ProjectData;
+  playhead: number;
+  selWin: string | null;
+  selTrack: string | null;
+  view: unknown;
+}
+
+/** A view (the timeline) whose zoom and scroll are saved with the editor state. */
+export interface ViewState {
+  get(): unknown;
+  set(v: unknown): void;
+  reset(): void;
+}
 
 export class App {
   store = new Store(emptyProject());
@@ -46,15 +68,19 @@ export class App {
   private saveTimer = 0;
   toast: (msg: string, kind?: 'error' | 'info') => void = () => {};
   onLoading: (msg: string | null) => void = () => {};
+  view: ViewState | null = null;
 
   constructor() {
     this.selTrack = this.store.data.tracks[0].id;
     this.store.subscribe(() => {
+      this.syncTimebase();
       this.fixSelection();
       this.uiDirty = true;
       this.invalidate();
-      this.scheduleSave();
+      this.saveSoon();
     });
+    window.addEventListener('pagehide', () => this.saveNow());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveNow(); });
   }
 
   get data(): ProjectData {
@@ -77,13 +103,7 @@ export class App {
   /** Changing the assumption re-opens the video so every decoder picks it up. */
   async setUntaggedColor(c: UntaggedColor) {
     try { localStorage.setItem(COLOR_KEY, c); } catch { /* storage unavailable */ }
-    if (this.media) {
-      const { playhead, selWin } = this;
-      await this.open(this.media.file);
-      this.playhead = Math.min(playhead, this.total - 1);
-      this.select(selWin);
-      this.updateWants();
-    }
+    if (this.media) await this.open(this.media.file, true);
   }
 
   onDraw(fn: () => void) { this.drawers.push(fn); }
@@ -106,12 +126,17 @@ export class App {
 
   // ---------------------------------------------------------------- media
 
-  async open(file: File) {
+  /** Open a video and restore its saved editor state, if any (quietly when re-opening the same file). */
+  async open(file: File, quiet = false) {
     this.stop();
+    this.saveNow();
     this.onLoading(`Opening ${file.name}…`);
-    let demux: Demux;
+    let demux: Demux, hash: string;
     try {
-      demux = await openVideo(file, msg => this.onLoading(msg), this.untaggedColor);
+      [demux, hash] = await Promise.all([
+        openVideo(file, msg => this.onLoading(msg), this.untaggedColor),
+        hashFile(file).catch(() => legacyKey(file)),
+      ]);
     } catch (e) {
       this.onLoading(null);
       this.toast(String((e as Error)?.message ?? e), 'error');
@@ -127,20 +152,47 @@ export class App {
     frames.onFrame = () => this.invalidate();
     frames.onError = msg => this.toast(msg, 'error');
     thumbs.onThumb = () => this.invalidate();
-    const saved = this.loadSaved(file);
-    const data = saved ?? emptyProject();
+    const saved = loadState(hash, file);
+    const data = saved?.project ?? emptyProject();
     this.media = {
-      file, demux, frames, thumbs, sourceFps,
+      file, hash, demux, frames, thumbs, sourceFps,
       tb: new Timebase(demux.index, data.fps, sourceFps),
       W: info.width, H: info.height,
       orient: { rawW: info.rawW, rawH: info.rawH, rotation: info.rotation, flip: info.flip },
     };
     this.store.replace(data, false);
-    this.selTrack = data.tracks[0].id;
-    this.selWin = null;
-    this.playhead = 0;
+    this.selTrack = this.track(saved?.selTrack)?.id ?? data.tracks[0].id;
+    this.selWin = this.win(saved?.selWin)?.id ?? null;
+    this.playhead = Math.max(0, Math.min(this.total - 1, saved?.playhead ?? 0));
+    this.view?.reset();
+    if (saved?.view) this.view?.set(saved.view);
     this.onLoading(null);
-    if (saved) this.toast('Restored the saved project for this video.');
+    if (saved && !quiet) this.toast('Restored where you left off with this video. Reset starts over.');
+    this.updateWants();
+    this.invalidate(true);
+  }
+
+  /** Keep the timebase in step with the project's fps (after undo, redo or reset). */
+  private syncTimebase() {
+    const m = this.media;
+    if (!m) return;
+    const fps = this.data.fps;
+    if (fps == null ? m.tb.native : !m.tb.native && Math.abs(m.tb.fps - fps) < 1e-9) return;
+    const old = m.tb;
+    m.tb = new Timebase(m.demux.index, fps, m.sourceFps);
+    this.playhead = Math.min(m.tb.count - 1, m.tb.frameAt(old.time(this.playhead) + 1e-6));
+    this.updateWants();
+  }
+
+  /** Start this video over: an empty project at frame 0. Undo brings the old project back. */
+  resetEditor() {
+    if (!this.media) return;
+    this.stop();
+    this.selWin = null;
+    this.store.replace(emptyProject());
+    this.selTrack = this.data.tracks[0].id;
+    this.playhead = 0;
+    this.view?.reset();
     this.updateWants();
     this.invalidate(true);
   }
@@ -197,6 +249,7 @@ export class App {
     this.selWin = id;
     const w = this.win(id);
     if (w) this.selTrack = w.track;
+    this.saveSoon();
     this.invalidate(true);
   }
 
@@ -224,6 +277,7 @@ export class App {
     if (f === this.playhead) return;
     this.playhead = f;
     if (this.play) this.play.nextDue = performance.now() + 1000 / this.media!.tb.fps;
+    else this.saveSoon();
     this.updateWants();
     this.invalidate(true);
   }
@@ -296,6 +350,7 @@ export class App {
     this.play = null;
     this.media?.frames.pin([]);
     this.media?.thumbs.setPaused(false);
+    this.saveSoon();
     this.updateWants();
     this.invalidate(true);
   }
@@ -584,38 +639,36 @@ export class App {
 
   // ---------------------------------------------------------- persistence
 
-  private saveKey(file: File) {
-    return `vs.project:${file.name}:${file.size}:${file.lastModified}`;
-  }
-
-  private loadSaved(file: File): ProjectData | null {
-    try {
-      const raw = localStorage.getItem(this.saveKey(file));
-      return raw ? sanitizeProject(JSON.parse(raw)) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private scheduleSave() {
+  /** Save the editor state shortly, coalescing bursts of edits. */
+  saveSoon() {
     clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => {
-      if (!this.media) return;
-      try { localStorage.setItem(this.saveKey(this.media.file), JSON.stringify(this.data)); } catch { /* storage full or blocked */ }
-    }, 400);
+    this.saveTimer = window.setTimeout(() => this.saveNow(), 400);
+  }
+
+  saveNow() {
+    clearTimeout(this.saveTimer);
+    const m = this.media;
+    if (!m) return;
+    const state: EditorState = {
+      version: 1, saved: Date.now(), project: this.data,
+      playhead: this.playhead, selWin: this.selWin, selTrack: this.selTrack, view: this.view?.get() ?? null,
+    };
+    storeState(STATE_PREFIX + m.hash, JSON.stringify(state));
   }
 
   exportProject(): Blob {
     const m = this.media;
     const body = {
       ...this.data,
-      source: m ? { name: m.file.name, size: m.file.size, width: m.W, height: m.H, frames: m.tb.count, fps: m.tb.fps } : undefined,
+      source: m ? { name: m.file.name, size: m.file.size, hash: m.hash, width: m.W, height: m.H, frames: m.tb.count, fps: m.tb.fps } : undefined,
     };
     return new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
   }
 
-  importProject(text: string) {
-    const data = sanitizeProject(JSON.parse(text));
+  /** Load a saved project; returns false when it was saved for different video content. */
+  importProject(text: string): boolean {
+    const raw = JSON.parse(text);
+    const data = sanitizeProject(raw);
     const m = this.media;
     if (m) m.tb = new Timebase(m.demux.index, data.fps, m.sourceFps);
     const total = this.total;
@@ -624,6 +677,57 @@ export class App {
     this.selWin = null;
     this.store.replace(data);
     this.updateWants();
+    const hash = raw?.source?.hash;
+    return !m || typeof hash !== 'string' || hash === m.hash;
+  }
+}
+
+/** The pre-hash save key, used when a file can't be read for hashing and to migrate old saves. */
+function legacyKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function loadState(hash: string, file: File): EditorState | null {
+  try {
+    const raw = localStorage.getItem(STATE_PREFIX + hash);
+    if (raw) {
+      const s = JSON.parse(raw) as Partial<EditorState>;
+      return {
+        version: 1, saved: Number(s.saved) || 0, project: sanitizeProject(s.project),
+        playhead: Math.max(0, Math.round(Number(s.playhead) || 0)),
+        selWin: typeof s.selWin === 'string' ? s.selWin : null,
+        selTrack: typeof s.selTrack === 'string' ? s.selTrack : null,
+        view: s.view ?? null,
+      };
+    }
+    // Projects saved before content hashing were keyed by name, size and date: adopt one.
+    const old = `vs.project:${legacyKey(file)}`;
+    const legacy = localStorage.getItem(old);
+    if (!legacy) return null;
+    localStorage.removeItem(old);
+    return { version: 1, saved: 0, project: sanitizeProject(JSON.parse(legacy)), playhead: 0, selWin: null, selTrack: null, view: null };
+  } catch {
+    return null;
+  }
+}
+
+/** Write a state, dropping the least recently saved videos' states while storage is full. */
+function storeState(key: string, json: string) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try { localStorage.setItem(key, json); return; } catch { /* full, or storage blocked */ }
+    let oldest: string | null = null, when = Infinity;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || k === key || !(k.startsWith(STATE_PREFIX) || k.startsWith('vs.project:'))) continue;
+        const t = k.startsWith(STATE_PREFIX) ? Number(JSON.parse(localStorage.getItem(k) ?? '{}').saved) || 0 : 0;
+        if (t < when) { when = t; oldest = k; }
+      }
+      if (!oldest) return;
+      localStorage.removeItem(oldest);
+    } catch {
+      return;
+    }
   }
 }
 

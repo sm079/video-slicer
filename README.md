@@ -23,7 +23,9 @@ Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder need
 6. **Crop.** Drag the box to move it, the handles to resize, and the round handle to rotate. Drag outside the box to draw a new one. A track's output size can be derived from the crop (sides snapped to a multiple of ÷), or fixed with W × H, which locks the crop's shape. Turn on **Animate** to keyframe the crop: every edit then keys it at the playhead, and keys interpolate linearly.
 7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys.
 
-Press <kbd>?</kbd> in the app for all shortcuts. Projects autosave per video file in the browser, and **Save project** writes them to JSON.
+Press <kbd>?</kbd> in the app for all shortcuts.
+
+The editor state (windows, tracks, fps, playhead, selection and timeline zoom) autosaves in the browser under a fingerprint of the video's content, so opening the same video again, even renamed or copied elsewhere, picks up where you left off. **Reset** starts the video over (undoable), and **Save project** writes the project to JSON. The fingerprint is a SHA-256 of the whole file up to 64 MB; for larger files it covers the size and 32 evenly spaced 1 MiB samples, so opening stays fast.
 
 ## How it stays frame-exact
 

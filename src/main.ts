@@ -40,7 +40,6 @@ app.onLoading = msg => {
 async function open(file: File) {
   await app.open(file);
   if (app.media) {
-    timeline.onMediaChanged();
     $('drop').classList.add('hidden');
     document.title = `${file.name} · Video Slicer`;
   }
@@ -78,6 +77,11 @@ $('save').onclick = () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 };
+$('reset').onclick = () => {
+  if (!app.media) return;
+  app.resetEditor();
+  app.toast('Started this video over. Undo (Ctrl+Z) brings the old project back.');
+};
 $('load').onclick = () => {
   if (!app.media) { app.toast('Open the video first, then load its project.'); return; }
   $<HTMLInputElement>('projfile').click();
@@ -90,8 +94,8 @@ $<HTMLInputElement>('projfile').onchange = e => {
 async function loadProject(f: File) {
   if (!app.media) { app.toast('Open the video first, then load its project.'); return; }
   try {
-    app.importProject(await f.text());
-    app.toast('Project loaded.');
+    if (app.importProject(await f.text())) app.toast('Project loaded.');
+    else app.toast('Project loaded, but it was saved for a different video file. Check the windows.', 'error');
   } catch (e) {
     app.toast(String((e as Error)?.message ?? e), 'error');
   }
