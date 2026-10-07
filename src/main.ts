@@ -127,27 +127,44 @@ app.onUi(() => {
   $('fileinfo').textContent = m ? `${m.file.name} · ${m.W}×${m.H} · ${(m.file.size / 1048576).toFixed(1)} MB` : '';
 });
 
-// --------------------------------------------------------- split handle
+// -------------------------------------------------------- split handles
 
-{
-  const split = $('split');
-  const saved = Number(localStorageGet('vs.timelineH'));
-  if (saved > 80) document.documentElement.style.setProperty('--timeline-h', `${saved}px`);
-  split.addEventListener('pointerdown', e => {
-    split.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      const h = Math.max(120, Math.min(window.innerHeight - 240, window.innerHeight - ev.clientY - 4));
-      document.documentElement.style.setProperty('--timeline-h', `${h}px`);
-    };
+/** Drag `handle` to set a CSS size variable; the size is remembered, double-click restores the default. */
+function splitter(handle: HTMLElement, cssVar: string, storageKey: string, sizeAt: (e: PointerEvent) => number, limits: () => [number, number]) {
+  const root = document.documentElement;
+  const apply = (px: number) => {
+    const [lo, hi] = limits();
+    root.style.setProperty(cssVar, `${Math.round(Math.max(lo, Math.min(hi, px)))}px`);
+  };
+  const saved = Number(localStorageGet(storageKey));
+  if (saved > 0) apply(saved);
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => apply(sizeAt(ev));
     const up = () => {
-      split.removeEventListener('pointermove', move);
-      const h = getComputedStyle(document.documentElement).getPropertyValue('--timeline-h');
-      localStorageSet('vs.timelineH', String(parseInt(h)));
+      handle.removeEventListener('pointermove', move);
+      localStorageSet(storageKey, String(parseInt(root.style.getPropertyValue(cssVar))));
     };
-    split.addEventListener('pointermove', move);
-    split.addEventListener('pointerup', up, { once: true });
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('lostpointercapture', up, { once: true });
+  });
+  handle.addEventListener('dblclick', () => {
+    root.style.removeProperty(cssVar);
+    try { localStorage.removeItem(storageKey); } catch { /* blocked */ }
+  });
+  // Keep a remembered size valid when the window shrinks.
+  window.addEventListener('resize', () => {
+    const cur = parseInt(root.style.getPropertyValue(cssVar));
+    if (cur > 0) apply(cur);
   });
 }
+
+splitter($('split'), '--timeline-h', 'vs.timelineH', e => window.innerHeight - e.clientY - 4,
+  () => [120, Math.max(120, window.innerHeight - 240)]);
+splitter($('vsplit'), '--side-w', 'vs.sideW', e => window.innerWidth - e.clientX - 2,
+  () => [260, Math.max(260, Math.min(900, window.innerWidth - 360))]);
 
 function localStorageGet(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
 function localStorageSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* blocked */ } }
