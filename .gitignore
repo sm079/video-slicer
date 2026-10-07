@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+# local test media
+samples/
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
