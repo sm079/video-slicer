@@ -39,6 +39,19 @@ export interface VideoInfo {
   color: string;
 }
 
+export interface AudioInfo {
+  codec: string;
+  sampleRate: number;
+  channels: number;
+}
+
+/** The primary audio track, decoded on demand. Times are on the same clock as the video's pts. */
+export interface AudioStream {
+  info: AudioInfo;
+  /** Decoded audio from about `from` seconds (the buffer containing it) up to `to`, in order. */
+  buffers(from: number, to?: number): AsyncGenerator<{ t: number; buf: AudioBuffer }>;
+}
+
 /** Matrix assumed when a file does not say: BT.601 is what ffmpeg (and PyAV, OpenCV) use. */
 export type UntaggedColor = 'bt601' | 'bt709';
 
@@ -46,6 +59,8 @@ export interface Demux {
   info: VideoInfo;
   index: FrameIndex;
   config: VideoDecoderConfig;
+  /** Null when the file has no audio, or none this browser can decode. */
+  audio: AudioStream | null;
   /** Chunks in decode order, starting at the keyframe needed to decode frame `idx`. */
   packets(idx: number): AsyncGenerator<EncodedVideoChunk>;
   /** The keyframe chunk at or before frame `idx` (for thumbnails). */
@@ -115,6 +130,63 @@ async function supported(config: VideoDecoderConfig) {
   }
 }
 
+/** AudioData → AudioBuffer (planar float, which Web Audio and the exporter both take). */
+function toAudioBuffer(d: AudioData): AudioBuffer {
+  const buf = new AudioBuffer({ length: d.numberOfFrames, numberOfChannels: d.numberOfChannels, sampleRate: d.sampleRate });
+  const plane = new Float32Array(d.numberOfFrames);
+  for (let c = 0; c < d.numberOfChannels; c++) {
+    d.copyTo(plane, { planeIndex: c, format: 'f32-planar' });
+    buf.copyToChannel(plane, c);
+  }
+  return buf;
+}
+
+/** Decode audio chunks with WebCodecs, a few ahead of the consumer. */
+async function* decodeAudio(config: AudioDecoderConfig, chunks: AsyncGenerator<EncodedAudioChunk>): AsyncGenerator<{ t: number; buf: AudioBuffer }> {
+  const queue: AudioData[] = [];
+  let wake: (() => void) | null = null;
+  let error: unknown = null, feeding = true, stop = false;
+  const poke = () => { const w = wake; wake = null; w?.(); };
+  const decoder = new AudioDecoder({ output: d => { queue.push(d); poke(); }, error: e => { error = e; poke(); } });
+  decoder.configure(config);
+  const feeder = (async () => {
+    try {
+      for (;;) {
+        while (!stop && !error && (decoder.decodeQueueSize > 8 || queue.length > 16)) await new Promise(r => setTimeout(r, 5));
+        if (stop || error) break;
+        const { done, value } = await chunks.next();
+        if (done) { await decoder.flush(); break; }
+        if (decoder.state !== 'configured') break;
+        decoder.decode(value);
+      }
+    } catch (e) {
+      if (!stop) error = e;
+    } finally {
+      feeding = false;
+      poke();
+    }
+  })();
+  try {
+    for (;;) {
+      if (error) throw error;
+      const d = queue.shift();
+      if (d) {
+        const t = d.timestamp / 1e6;
+        try { yield { t, buf: toAudioBuffer(d) }; } finally { d.close(); }
+        continue;
+      }
+      if (!feeding) return;
+      await new Promise<void>(r => { wake = r; if (queue.length || !feeding || error) poke(); });
+    }
+  } finally {
+    stop = true;
+    await feeder.catch(() => {});
+    for (const d of queue) d.close();
+    if (decoder.state !== 'closed') decoder.close();
+    chunks.return(undefined).catch(() => {});
+  }
+}
+
 export type Progress = (msg: string, fraction?: number) => void;
 
 export async function openVideo(file: File, progress: Progress, untagged: UntaggedColor = 'bt601'): Promise<Demux> {
@@ -164,6 +236,17 @@ async function openMediabunny(file: File, progress: Progress, untagged: Untagged
   const flip = await track.getFlip().catch(() => false);
   const rawW = track.codedWidth, rawH = track.codedHeight;
   const format = await input.getFormat();
+  let audio: AudioStream | null = null;
+  const audioTrack = await input.getPrimaryAudioTrack().catch(() => null);
+  if (audioTrack && await audioTrack.canDecode().catch(() => false)) {
+    const audioSink = new mb.AudioBufferSink(audioTrack);
+    audio = {
+      info: { codec: (await audioTrack.getCodec()) ?? 'unknown', sampleRate: audioTrack.sampleRate, channels: audioTrack.numberOfChannels },
+      async *buffers(from, to) {
+        for await (const b of audioSink.buffers(from, to)) yield { t: b.timestamp, buf: b.buffer };
+      },
+    };
+  }
   const info: VideoInfo = {
     fileName: file.name, container: format.name, codec,
     rawW, rawH, rotation, flip, ...rotated(rawW, rawH, rotation), demuxer: 'mediabunny', color,
@@ -175,7 +258,7 @@ async function openMediabunny(file: File, progress: Progress, untagged: Untagged
     });
 
   return {
-    info, index, config: plain,
+    info, index, config: plain, audio,
     async *packets(idx) {
       const start = await sink.getKeyPacket(index.pts[idx], { verifyKeyPackets: true })
         ?? await sink.getFirstKeyPacket({ verifyKeyPackets: true });
@@ -271,31 +354,60 @@ async function openFfmpeg(file: File, progress: Progress, untagged: UntaggedColo
   };
   let keyQueue: Promise<unknown> = Promise.resolve();
 
+  type Packet = { keyframe: number; timestamp: number; duration: number; data: Uint8Array };
+  async function* read(start: number, end: number, type: typeof AVMediaType.AVMEDIA_TYPE_VIDEO | typeof AVMediaType.AVMEDIA_TYPE_AUDIO): AsyncGenerator<Packet> {
+    const d = await acquire();
+    const r = d.readAVPacket(start, end, type, -1, AVSeekFlag.AVSEEK_FLAG_BACKWARD).getReader();
+    let finished = false, healthy = true;
+    try {
+      for (;;) {
+        const { done, value } = await r.read();
+        if (done) { finished = true; return; }
+        yield value;
+      }
+    } catch (e) {
+      healthy = false;
+      throw e;
+    } finally {
+      if (!finished && healthy) {
+        // Wait for the worker to stop the read before it serves anyone else.
+        const stopped = await Promise.race([r.cancel().then(() => true, () => false), new Promise<boolean>(res => setTimeout(() => res(false), 1500))]);
+        healthy = stopped;
+      }
+      release(d, healthy);
+    }
+  }
+
+  let audio: AudioStream | null = null;
+  try {
+    const as = await demuxer.getMediaStream('audio');
+    const audioConfig = demuxer.genDecoderConfig('audio', as) as AudioDecoderConfig;
+    if ((await AudioDecoder.isConfigSupported(audioConfig).catch(() => null))?.supported) {
+      audio = {
+        info: { codec: as.codec_name, sampleRate: audioConfig.sampleRate, channels: audioConfig.numberOfChannels },
+        buffers(from, to) {
+          async function* chunks() {
+            for await (const p of read(Math.max(0, from), to ?? 0, AVMediaType.AVMEDIA_TYPE_AUDIO)) {
+              yield new EncodedAudioChunk({ type: 'key', timestamp: toUs(p.timestamp), duration: Math.max(0, toUs(p.duration)), data: p.data });
+            }
+          }
+          return decodeAudio(audioConfig, chunks());
+        },
+      };
+    }
+  } catch {
+    // No audio stream.
+  }
+
   return {
-    info, index, config,
+    info, index, config, audio,
     async *packets(idx) {
-      const d = await acquire();
-      const r = d.readAVPacket(keyTime(idx), 0, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, AVSeekFlag.AVSEEK_FLAG_BACKWARD).getReader();
-      let started = false, finished = false, healthy = true;
-      try {
-        for (;;) {
-          const { done, value } = await r.read();
-          if (done) { finished = true; return; }
-          // A decoder must start on a keyframe.
-          if (!started && value.keyframe !== 1) continue;
-          started = true;
-          yield chunk(value);
-        }
-      } catch (e) {
-        healthy = false;
-        throw e;
-      } finally {
-        if (!finished && healthy) {
-          // Wait for the worker to stop the read before it serves anyone else.
-          const stopped = await Promise.race([r.cancel().then(() => true, () => false), new Promise<boolean>(res => setTimeout(() => res(false), 1500))]);
-          healthy = stopped;
-        }
-        release(d, healthy);
+      let started = false;
+      for await (const p of read(keyTime(idx), 0, AVMediaType.AVMEDIA_TYPE_VIDEO)) {
+        // A decoder must start on a keyframe.
+        if (!started && p.keyframe !== 1) continue;
+        started = true;
+        yield chunk(p);
       }
     },
     keyChunk(idx) {
