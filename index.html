@@ -137,7 +137,7 @@
           <div class="seg" role="radiogroup" aria-label="Clips">
             <label><input type="radio" name="x-scope" value="all" checked><span>All <em id="x-n-all"></em></span></label>
             <label><input type="radio" name="x-scope" value="track"><span>This track <em id="x-n-track"></em></span></label>
-            <label><input type="radio" name="x-scope" value="sel"><span>Selected</span></label>
+            <label><input type="radio" name="x-scope" value="sel"><span>Selected <em id="x-n-sel"></em></span></label>
           </div>
         </div>
         <div class="opt">
@@ -161,6 +161,7 @@
           <div class="seg" role="radiogroup" aria-label="Save to">
             <label id="x-dest-folder"><input type="radio" name="x-dest" value="folder" checked><span><i data-icon="folder" data-size="14"></i>Folder</span></label>
             <label><input type="radio" name="x-dest" value="zip"><span><i data-icon="zip" data-size="14"></i>ZIP</span></label>
+            <label data-tip="Download each file on its own, unzipped"><input type="radio" name="x-dest" value="files"><span><i data-icon="save" data-size="14"></i>Files</span></label>
           </div>
         </div>
         <div class="opt">
@@ -213,6 +214,9 @@
             <dt>Duplicate</dt><dd><kbd>Ctrl</kbd><kbd>D</kbd></dd>
             <dt>Delete</dt><dd><kbd>Del</kbd></dd>
             <dt>Free move</dt><dd>Hold <kbd>Alt</kbd></dd>
+            <dt>Select several</dt><dd><kbd>Ctrl</kbd> or <kbd>Shift</kbd> + click</dd>
+            <dt>Combine, in order picked</dt><dd><kbd>G</kbd></dd>
+            <dt>Uncombine</dt><dd><kbd>Shift</kbd><kbd>G</kbd></dd>
           </dl>
         </section>
         <section>

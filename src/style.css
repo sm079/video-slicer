@@ -384,6 +384,7 @@ body.dragging .drop-overlay { display: grid; }
 .stack { display: grid; gap: 4px; }
 .stack > .lbl { color: var(--text-3); font-size: 11.5px; }
 .times { color: var(--text-3); font-size: 11.5px; padding-left: 2px; }
+.times .here { color: var(--text); font-weight: 600; }
 .toolbar { display: flex; gap: 2px; align-items: center; flex-wrap: wrap; }
 .toolbar .divider { margin: 0 3px; }
 .empty-note { color: var(--text-3); font-size: 12px; display: flex; align-items: center; gap: 8px; padding: 2px 0; }

@@ -226,8 +226,11 @@ export class Timeline {
     if (hit) {
       const orig: Win = JSON.parse(JSON.stringify(hit.w));
       if (hit.part === 'play') { app.playLoop(hit.w.id); return; }
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { app.stop(); app.toggleSelect(hit.w.id); return; }
       if (app.play && app.play.loop !== hit.w.id) app.stop();
-      app.select(hit.w.id);
+      // Pressing on a window of a multi-selection keeps the group while it is dragged; a plain click narrows it (in up).
+      if (app.isSelected(hit.w.id) && hit.part === 'body') app.focus(hit.w.id);
+      else app.select(hit.w.id);
       if (hit.part === 'key') { this.drag = { kind: 'key', win: hit.w, key: hit.key!, moved: false, x0: x }; return; }
       if (hit.part === 'l' || hit.part === 'r') { this.drag = { kind: 'resize', win: hit.w, side: hit.part, orig }; return; }
       if (dbl) { this.show(hit.w.start, hit.w.start + hit.w.len); return; }
@@ -318,7 +321,7 @@ export class Timeline {
     switch (d.kind) {
       case 'move':
         if (d.moved) app.store.commit();
-        else app.seek(Math.floor(this.frameAt(x)));
+        else { app.select(d.win.id); app.seek(Math.floor(this.frameAt(x))); }
         break;
       case 'create':
         if (d.win) app.store.commit();
@@ -428,9 +431,12 @@ export class Timeline {
       if (hit) {
         cursor = hit.part === 'body' ? 'grab' : hit.part === 'play' ? 'pointer' : 'ew-resize';
         const n = this.app.data.windows.filter(o => o.track === hit.w.track && o.start < hit.w.start).length + 1;
-        text = hit.part === 'play' ? (this.app.play?.loop === hit.w.id ? 'Stop loop' : 'Loop window')
+        const g = this.app.group(hit.w.id);
+        const gi = g ? `Group ${this.app.data.groups.indexOf(g) + 1} · part ${g.wins.indexOf(hit.w.id) + 1} of ${g.wins.length} · ` : '';
+        const playing = this.app.play?.loop === hit.w.id || !!this.app.play?.seq?.includes(hit.w.id);
+        text = hit.part === 'play' ? (playing ? 'Stop' : g ? `Play group ${this.app.data.groups.indexOf(g) + 1}` : 'Loop window')
           : hit.part === 'key' ? `Key at frame ${hit.key!.f} · drag to retime`
-          : `Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
+          : `${gi}Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
       } else if (this.app.data.tracks[this.laneAt(y)]) cursor = 'crosshair';
     } else if (y >= this.lanesBottom && x >= HEADER_W) cursor = 'pointer';
     else if (addRow || (x < HEADER_W && this.app.data.tracks[this.laneAt(y)])) cursor = 'pointer';
@@ -598,8 +604,11 @@ export class Timeline {
     const x0 = this.x(w.start), x1 = this.x(w.start + w.len);
     if (x1 < HEADER_W || x0 > this.w) return;
     const y = this.laneY(idx) + 2, h = LANE_H - 4;
-    const sel = w.id === app.selWin;
+    const sel = app.isSelected(w.id);
     const looping = app.play?.loop === w.id;
+    const g = app.group(w.id);
+    // The rest of the selected window's group gets a dashed outline.
+    const sibling = !sel && !!g && g.wins.includes(app.selWin ?? '');
     const width = Math.max(2, x1 - x0);
     ctx.globalAlpha = sel || looping ? 1 : 0.72;
     ctx.fillStyle = track.color;
@@ -615,6 +624,13 @@ export class Timeline {
       ctx.lineWidth = 2;
       roundRect(ctx, x0 - 1, y - 1, width + 2, h + 2, 6);
       ctx.stroke();
+    } else if (sibling) {
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      roundRect(ctx, x0 - 1, y - 1, width + 2, h + 2, 6);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.fillStyle = '#0b0d12';
     let tx = x0 + 6;
@@ -634,7 +650,9 @@ export class Timeline {
       const out = outputSize(w, track);
       ctx.fillStyle = 'rgba(8,9,12,.92)';
       ctx.font = `600 11px ${FONT}`;
-      const label = `${n}  ·  ${w.len} f${width > 150 ? `  ·  ${out.w}×${out.h}` : ''}`;
+      // Combined windows show their group and place in it, e.g. "G2·1".
+      const tag = g ? `G${app.data.groups.indexOf(g) + 1}·${g.wins.indexOf(w.id) + 1}  ·  ` : '';
+      const label = `${tag}${n}  ·  ${w.len} f${width > 150 ? `  ·  ${out.w}×${out.h}` : ''}`;
       ctx.fillText(ellipsize(ctx, label, x1 - tx - 6), tx, y + 16);
     }
     // Keyframes.

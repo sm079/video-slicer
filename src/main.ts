@@ -5,8 +5,8 @@ import { Timeline, timecode } from './ui/timeline';
 import { Inspector, OutputPreview } from './ui/inspector';
 import { hydrateIcons, icon } from './ui/icons';
 import { initMenus, showToast, escapeHtml } from './ui/widgets';
-import { runExport, folderWriter, zipWriter, type ExportOptions, type Format, type Quality } from './export/export';
-import { outputSize } from './model/project';
+import { runExport, folderWriter, zipWriter, downloadWriter, type ExportOptions, type Format, type Quality } from './export/export';
+import { exportUnits, outputSize, type Win } from './model/project';
 import { formatFps } from './media/timebase';
 import { initTheme, themePref, type ThemePref } from './ui/theme';
 
@@ -269,6 +269,7 @@ window.addEventListener('keydown', e => {
     case 'i': case 'I': handled(); app.setEdge('start'); break;
     case 'o': case 'O': handled(); app.setEdge('end'); break;
     case 'k': case 'K': handled(); app.toggleKey(); break;
+    case 'g': case 'G': handled(); if (e.shiftKey) app.uncombineSelection(); else app.combineSelection(); break;
     case '[': handled(); app.jumpKey(-1); break;
     case ']': handled(); app.jumpKey(1); break;
     case '+': case '=': handled(); timeline.zoomBy(1.6); break;
@@ -294,17 +295,28 @@ if (!('showDirectoryPicker' in window)) {
 }
 
 function windowsFor(scope: string) {
-  if (scope === 'sel') return app.selected ? [app.selected] : [];
+  if (scope === 'sel') return app.selection;
   if (scope === 'track') return app.data.windows.filter(w => w.track === app.currentTrack.id);
   return app.data.windows;
 }
 
+/** Clip count, frame count and summary label for exporting `wins`; a combined group is one clip. */
+function exportPlan(wins: Win[]) {
+  const units = exportUnits(app.data, wins);
+  const frames = units.reduce((s, u) => s + u.wins.reduce((t, w) => t + w.len, 0), 0);
+  const combined = units.filter(u => u.group).length;
+  const label = `${units.length} clip${units.length === 1 ? '' : 's'}${combined ? ` (${combined} combined)` : ''}`;
+  return { units, frames, label };
+}
+
 function summarize() {
   const wins = windowsFor(radio('x-scope').value);
-  const frames = wins.reduce((s, w) => s + w.len, 0);
-  const sizes = new Set(wins.map(w => { const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
+  const { units, frames, label: clips } = exportPlan(wins);
+  // A combined clip takes the size of its first window.
+  const sizes = new Set(units.map(u => { const w = u.wins[0]; const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
+  const perFrame = radio('x-dest').value === 'files' && radio('x-format').value === 'png' ? ' · one download per frame' : '';
   $('x-summary').textContent = wins.length
-    ? `${wins.length} clip${wins.length > 1 ? 's' : ''} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}`
+    ? `${clips} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}${perFrame}`
     : 'Nothing to export';
   $('x-quality-row').hidden = radio('x-format').value === 'png';
   $<HTMLButtonElement>('x-go').disabled = !wins.length || !!abort;
@@ -314,8 +326,9 @@ function openExport() {
   if (!app.media || dlg.open) return;
   if (!app.data.windows.length) { app.toast('Draw a window on the timeline first.'); return; }
   app.stop();
-  $('x-n-all').textContent = String(app.data.windows.length);
-  $('x-n-track').textContent = String(windowsFor('track').length);
+  $('x-n-all').textContent = String(exportPlan(app.data.windows).units.length);
+  $('x-n-track').textContent = String(exportPlan(windowsFor('track')).units.length);
+  $('x-n-sel').textContent = exportPlan(app.selection).units.length > 1 ? String(exportPlan(app.selection).units.length) : '';
   const sel = radio('x-scope');
   const selInput = form.querySelector<HTMLInputElement>('input[name=x-scope][value=sel]')!;
   selInput.disabled = !app.selected;
@@ -350,7 +363,9 @@ $('x-go').onclick = async () => {
   let writer;
   const base = app.media!.file.name.replace(/\.[^.]+$/, '');
   try {
-    if (radio('x-dest').value === 'folder') {
+    const dest = radio('x-dest').value;
+    if (dest === 'files') writer = downloadWriter();
+    else if (dest === 'folder') {
       const dir = await (window as unknown as { showDirectoryPicker(o: object): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({ mode: 'readwrite', id: 'video-slicer-export' });
       writer = await folderWriter(dir);
     } else writer = await zipWriter(`${base}_slices.zip`);
@@ -372,7 +387,7 @@ $('x-go').onclick = async () => {
   summarize();
   // Export is disabled while running; keep focus (and Escape) inside the dialog.
   $('x-cancel').focus();
-  const total = wins.reduce((s, w) => s + w.len, 0);
+  const total = exportPlan(wins).frames;
   let done = 0, lastClip = -1, clipBase = 0;
   const t0 = performance.now();
   try {
@@ -390,7 +405,7 @@ $('x-go').onclick = async () => {
     }, abort.signal);
     bar.style.width = '100%';
     xProgress.classList.add('done');
-    title.textContent = `Exported ${wins.length} clip${wins.length > 1 ? 's' : ''}`;
+    title.textContent = `Exported ${exportPlan(wins).label}`;
     pct.textContent = '';
     detail.textContent = `${total.toLocaleString()} frames in ${formatDuration((performance.now() - t0) / 1000)}`;
     if (!dlg.open) app.toast(title.textContent, 'success');

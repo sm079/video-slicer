@@ -72,7 +72,8 @@ export class Inspector {
   private shapeKey() {
     const a = this.app, w = a.selected, t = a.currentTrack;
     const common = [this.tab, a.media?.hash];
-    if (this.tab === 'window') return [...common, w?.id, w?.track, w?.animate, w?.keys.map(k => k.f).join(), t.id, t.color, t.rule.a, t.rule.b, a.data.tracks.map(t => t.id + t.name).join()].join('|');
+    const g = a.group(w?.id);
+    if (this.tab === 'window') return [...common, a.picked.join(), g?.wins.join(), g && a.data.groups.indexOf(g), w?.id, w?.track, w?.animate, w?.keys.map(k => k.f).join(), t.id, t.color, t.rule.a, t.rule.b, a.data.tracks.map(t => t.id + t.name).join()].join('|');
     if (this.tab === 'track') return [...common, t.id, t.color, t.rule.a, t.rule.b, a.presets.map(p => p.name).join('\n'), this.saving, this.customRule, RULE_PRESETS.findIndex(p => sameRule(p.rule, t.rule))].join('|');
     return [...common, !!a.media?.demux.audio].join('|');
   }
@@ -101,6 +102,32 @@ export class Inspector {
     this.root.innerHTML = this.tab === 'window' ? this.windowTab() : this.tab === 'track' ? this.trackTab() : this.projectTab();
   }
 
+  /** Combine the picked windows, or show the selected window's group. */
+  private combineSection() {
+    const a = this.app, n = a.picked.length, g = a.group(a.selWin);
+    const sameGroup = !!g && n > 1 && a.picked.every(id => g.wins.includes(id));
+    if (n > 1 && !sameGroup) {
+      return `
+      <section class="group">
+        <div class="empty-note">${icon('layers', 15)}<span>${n} windows selected. Combined, they play and export as one clip, in the order picked.</span></div>
+        <button class="btn block" data-act="combine" data-kbd="G">${icon('layers', 15)}<span>Combine ${n} windows</span></button>
+      </section>`;
+    }
+    if (!g) return '';
+    const order = g.wins.map((id, i) => {
+      const w = a.win(id)!;
+      return `<span class="${id === a.selWin ? 'here' : ''}">${i + 1}. ${w.start}–${w.start + w.len - 1}</span>`;
+    }).join(' → ');
+    return `
+      <section class="group">
+        <div class="group-head">
+          <h3>${icon('layers', 15)}<span>Group ${a.data.groups.indexOf(g) + 1}</span><span class="meta">part ${g.wins.indexOf(a.selWin!) + 1} of ${g.wins.length}</span></h3>
+          <div class="actions">${iconBtn('uncombine', 'x', 'Uncombine', 'Shift+G')}</div>
+        </div>
+        <div class="times">${order}</div>
+      </section>`;
+  }
+
   private windowTab() {
     const a = this.app, w = a.selected, t = a.currentTrack;
     let html = '';
@@ -123,6 +150,7 @@ export class Inspector {
         </div>
         <div class="times" id="win-times"></div>
       </section>`;
+      html += this.combineSection();
     } else {
       html += `
       <section class="group">
@@ -288,7 +316,7 @@ export class Inspector {
         const secs = m.tb.time(w.start + w.len - 1) - m.tb.time(w.start) + 1 / m.tb.fps;
         this.text('win-times', `${timecode(m.tb.time(w.start))} – ${timecode(m.tb.time(w.start + w.len))} · ${secs.toFixed(2)} s`);
         this.attr('#win-len-lbl', 'data-tip', t.rule.a > 1 ? `Snaps to ${ruleText(t.rule)}` : null);
-        this.root.querySelector('[data-act="loop"]')?.classList.toggle('on', a.play?.loop === w.id);
+        this.root.querySelector('[data-act="loop"]')?.classList.toggle('on', a.play?.loop === w.id || !!a.play?.seq?.includes(w.id));
         const inside = a.playhead >= w.start && a.playhead < w.start + w.len;
         this.text('crop-where', w.animate ? (inside ? `frame ${a.playhead - w.start}` : 'outside window') : '');
         if (w.animate) {
@@ -480,6 +508,8 @@ export class Inspector {
       case 'new': a.createWindowAt(a.playhead); break;
       case 'native': a.setFps(null); break;
       case 'loop': if (w) a.playLoop(w.id); break;
+      case 'combine': a.combineSelection(); break;
+      case 'uncombine': a.uncombineSelection(); break;
       case 'dup': if (w) a.duplicateWindow(w.id); break;
       case 'del': if (w) a.deleteWindow(w.id); break;
       case 'rot-': case 'rot+':
