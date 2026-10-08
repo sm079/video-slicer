@@ -4,7 +4,8 @@ import { Viewer } from './ui/viewer';
 import { Timeline, timecode } from './ui/timeline';
 import { Inspector, OutputPreview } from './ui/inspector';
 import { hydrateIcons, icon } from './ui/icons';
-import { initMenus, showToast, escapeHtml } from './ui/widgets';
+import { initMenus, initSegments, showToast, escapeHtml } from './ui/widgets';
+import { reducedMotion } from './ui/motion';
 import { runExport, folderWriter, zipWriter, downloadWriter, type ExportOptions, type Format, type Quality } from './export/export';
 import { exportUnits, outputSize, type Win } from './model/project';
 import { formatFps } from './media/timebase';
@@ -19,6 +20,7 @@ if (!('VideoDecoder' in window)) {
 
 hydrateIcons();
 initMenus();
+initSegments();
 
 const app = new App();
 const viewer = new Viewer($<HTMLCanvasElement>('viewer'), app, $<HTMLButtonElement>('viewer-fit'));
@@ -33,8 +35,23 @@ const setTheme = initTheme(() => app.invalidate(true));
 const themeRadios = document.querySelectorAll<HTMLInputElement>('input[name=theme]');
 themeRadios.forEach(r => {
   r.checked = r.value === themePref();
-  r.addEventListener('change', () => { if (r.checked) setTheme(r.value as ThemePref); });
+  r.addEventListener('change', () => { if (r.checked) switchTheme(r.value as ThemePref, r.closest('label')!); });
 });
+
+/** Change theme with the new one spreading out in a circle from `origin`. */
+function switchTheme(next: ThemePref, origin: Element) {
+  const root = document.documentElement;
+  if (!document.startViewTransition || reducedMotion()) { setTheme(next); return; }
+  const r = origin.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  root.style.setProperty('--vt-x', `${x}px`);
+  root.style.setProperty('--vt-y', `${y}px`);
+  root.style.setProperty('--vt-r', `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
+  root.classList.add('theme-vt');
+  // The canvases must be repainted before the new state is captured.
+  const vt = document.startViewTransition(() => { setTheme(next); app.flush(); });
+  void vt.finished.finally(() => root.classList.remove('theme-vt'));
+}
 
 app.toast = (msg, kind = 'info', action) => showToast($('toasts'), msg, { kind, action });
 app.onLoading = msg => {
@@ -113,7 +130,7 @@ $('t-play').onclick = () => app.togglePlay();
 $('t-new').onclick = () => app.createWindowAt(app.playhead);
 $('t-zin').onclick = () => timeline.zoomBy(1.6);
 $('t-zout').onclick = () => timeline.zoomBy(1 / 1.6);
-$('t-fit').onclick = () => timeline.fit();
+$('t-fit').onclick = () => timeline.fit(true);
 const muteBtn = $('t-mute'), volInput = $<HTMLInputElement>('t-vol');
 const showVolume = () => {
   const muted = app.audio.muted || app.audio.volume === 0;
@@ -143,8 +160,14 @@ app.onDraw(() => {
   if ($('t-time').textContent !== time) $('t-time').textContent = time;
   const state = app.play ? (app.play.loop ? 'loop' : 'play') : 'pause';
   if (state !== playState) {
+    // Play ↔ loop keeps the pause icon; only a real swap gets the morph.
+    const swapped = !!playState && (playState === 'pause') !== (state === 'pause');
     playState = state;
     playBtn.innerHTML = icon(app.play ? 'pause' : 'play', 18);
+    if (swapped && !reducedMotion()) {
+      playBtn.firstElementChild?.animate([{ transform: 'scale(.4) rotate(-45deg)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+        { duration: 240, easing: 'cubic-bezier(.34, 1.45, .64, 1)' });
+    }
     playBtn.dataset.tip = app.play ? 'Pause' : 'Play';
     playBtn.setAttribute('aria-label', playBtn.dataset.tip);
     playBtn.classList.toggle('looping', state === 'loop');
@@ -274,7 +297,7 @@ window.addEventListener('keydown', e => {
     case ']': handled(); app.jumpKey(1); break;
     case '+': case '=': handled(); timeline.zoomBy(1.6); break;
     case '-': case '_': handled(); timeline.zoomBy(1 / 1.6); break;
-    case 'f': case 'F': handled(); timeline.fit(); break;
+    case 'f': case 'F': handled(); timeline.fit(true); break;
     case 'm': case 'M': handled(); muteBtn.click(); break;
     case 'Escape': handled(); if (app.play) app.stop(); else app.select(null); break;
   }

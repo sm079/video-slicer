@@ -8,8 +8,10 @@ import { renderOutput } from '../model/render';
 import { timecode } from './timeline';
 import { icon } from './icons';
 import { escapeHtml as esc, initScrub } from './widgets';
+import { enter } from './motion';
 
 type Tab = 'window' | 'track' | 'project';
+const TABS: Tab[] = ['window', 'track', 'project'];
 const TAB_KEY = 'vs.tab';
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
@@ -30,6 +32,7 @@ export class Inspector {
   private saving = false;
   /** Show the a·n + b fields even when the rule matches a preset. */
   private customRule = false;
+  private ink = document.createElement('span');
 
   constructor(private root: HTMLElement, private tabs: HTMLElement, private app: App) {
     let saved: string | null = null;
@@ -50,23 +53,37 @@ export class Inspector {
       if (e.key === 'Escape' && t.tagName === 'INPUT') { this.shape = ''; t.blur(); this.update(); }
     });
     initScrub(root);
+    this.ink.className = 'tab-ink';
+    tabs.append(this.ink);
+    new ResizeObserver(() => this.placeInk(false)).observe(tabs);
     tabs.addEventListener('click', e => {
       const b = (e.target as Element).closest<HTMLElement>('[data-tab]');
       if (b) this.show(b.dataset.tab as Tab);
     });
     tabs.addEventListener('keydown', e => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const order: Tab[] = ['window', 'track', 'project'];
-      const next = order[(order.indexOf(this.tab) + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
+      const next = TABS[(TABS.indexOf(this.tab) + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
       this.show(next);
       tabs.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
     });
   }
 
   show(tab: Tab) {
+    const dir = Math.sign(TABS.indexOf(tab) - TABS.indexOf(this.tab));
     this.tab = tab;
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* blocked */ }
     this.update();
+    // The new panel comes in from the side of the tab that was picked.
+    if (dir) enter(this.root, dir * 14);
+  }
+
+  /** Slide the underline to the selected tab; jump there when `glide` is off (first show, resize). */
+  private placeInk(glide: boolean) {
+    const b = this.tabs.querySelector<HTMLElement>('[aria-selected=true]');
+    if (!b?.offsetWidth) return;
+    this.tabs.classList.toggle('ink-live', glide);
+    this.ink.style.transform = `translateX(${b.offsetLeft + 10}px)`;
+    this.ink.style.width = `${b.offsetWidth - 20}px`;
   }
 
   private shapeKey() {
@@ -84,6 +101,7 @@ export class Inspector {
       b.setAttribute('aria-selected', String(on));
       b.tabIndex = on ? 0 : -1;
     });
+    this.placeInk(true);
     const key = this.shapeKey();
     if (key !== this.shape) {
       this.shape = key;

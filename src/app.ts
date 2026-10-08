@@ -164,6 +164,12 @@ export class App {
     requestAnimationFrame(t => this.frame(t));
   }
 
+  /** Run pending UI updates and redraw right away, for when the next frame is too late (a view-transition snapshot). */
+  flush() {
+    if (this.uiDirty) { this.uiDirty = false; this.uiListeners.forEach(f => f()); }
+    this.drawers.forEach(f => f());
+  }
+
   private frame(now: number) {
     this.frameRequested = false;
     if (this.play) this.tick(now);
