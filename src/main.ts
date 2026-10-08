@@ -6,7 +6,7 @@ import { Inspector, OutputPreview } from './ui/inspector';
 import { hydrateIcons, icon } from './ui/icons';
 import { initMenus, showToast, escapeHtml } from './ui/widgets';
 import { runExport, folderWriter, zipWriter, type ExportOptions, type Format, type Quality } from './export/export';
-import { outputSize } from './model/project';
+import { outputSize, type Win } from './model/project';
 import { formatFps } from './media/timebase';
 import { initTheme, themePref, type ThemePref } from './ui/theme';
 
@@ -284,6 +284,7 @@ window.addEventListener('keydown', e => {
 const dlg = $<HTMLDialogElement>('export-dlg');
 const form = $<HTMLFormElement>('x-form');
 const xAudio = $<HTMLInputElement>('x-audio');
+const xCombine = $<HTMLInputElement>('x-combine');
 const radio = (name: string) => (form.elements.namedItem(name) as RadioNodeList);
 const xProgress = $('x-progress');
 let abort: AbortController | null = null;
@@ -294,17 +295,26 @@ if (!('showDirectoryPicker' in window)) {
 }
 
 function windowsFor(scope: string) {
-  if (scope === 'sel') return app.selected ? [app.selected] : [];
+  if (scope === 'sel') return app.selection;
   if (scope === 'track') return app.data.windows.filter(w => w.track === app.currentTrack.id);
   return app.data.windows;
 }
 
+/** Whether the export joins its windows into one clip. */
+const combining = (wins: Win[]) => xCombine.checked && wins.length > 1;
+
 function summarize() {
   const wins = windowsFor(radio('x-scope').value);
   const frames = wins.reduce((s, w) => s + w.len, 0);
-  const sizes = new Set(wins.map(w => { const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
+  xCombine.disabled = wins.length < 2;
+  $('x-combine-wrap').dataset.tip = wins.length < 2 ? 'Needs two or more clips' : 'Join the clips into one, played in timeline order';
+  // A combined clip takes the size of its first window (in timeline order).
+  const first = app.inTimelineOrder(wins)[0];
+  const sized = combining(wins) ? [first] : wins;
+  const sizes = new Set(sized.map(w => { const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
+  const clips = combining(wins) ? `1 clip from ${wins.length} windows` : `${wins.length} clip${wins.length > 1 ? 's' : ''}`;
   $('x-summary').textContent = wins.length
-    ? `${wins.length} clip${wins.length > 1 ? 's' : ''} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}`
+    ? `${clips} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}`
     : 'Nothing to export';
   $('x-quality-row').hidden = radio('x-format').value === 'png';
   $<HTMLButtonElement>('x-go').disabled = !wins.length || !!abort;
@@ -316,10 +326,13 @@ function openExport() {
   app.stop();
   $('x-n-all').textContent = String(app.data.windows.length);
   $('x-n-track').textContent = String(windowsFor('track').length);
+  $('x-n-sel').textContent = app.selection.length > 1 ? String(app.selection.length) : '';
   const sel = radio('x-scope');
   const selInput = form.querySelector<HTMLInputElement>('input[name=x-scope][value=sel]')!;
   selInput.disabled = !app.selected;
   sel.value = app.selected ? 'sel' : sel.value === 'sel' ? 'all' : sel.value;
+  // Several windows picked together are most likely meant to become one clip.
+  xCombine.checked = app.selection.length > 1;
   if (sel.value === 'track' && !windowsFor('track').length) sel.value = 'all';
   const audio = app.media.demux.audio;
   xAudio.disabled = !audio;
@@ -346,6 +359,7 @@ $('x-go').onclick = async () => {
   const opts: ExportOptions = {
     windows: wins, format: radio('x-format').value as Format, quality: radio('x-quality').value as Quality,
     manifest: $<HTMLInputElement>('x-manifest').checked, audio: xAudio.checked && !xAudio.disabled,
+    combine: combining(wins),
   };
   let writer;
   const base = app.media!.file.name.replace(/\.[^.]+$/, '');
@@ -390,7 +404,8 @@ $('x-go').onclick = async () => {
     }, abort.signal);
     bar.style.width = '100%';
     xProgress.classList.add('done');
-    title.textContent = `Exported ${wins.length} clip${wins.length > 1 ? 's' : ''}`;
+    const clips = opts.combine ? 1 : wins.length;
+    title.textContent = `Exported ${clips} clip${clips > 1 ? 's' : ''}${opts.combine ? ` from ${wins.length} windows` : ''}`;
     pct.textContent = '';
     detail.textContent = `${total.toLocaleString()} frames in ${formatDuration((performance.now() - t0) / 1000)}`;
     if (!dlg.open) app.toast(title.textContent, 'success');

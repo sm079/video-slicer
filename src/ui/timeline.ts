@@ -226,8 +226,11 @@ export class Timeline {
     if (hit) {
       const orig: Win = JSON.parse(JSON.stringify(hit.w));
       if (hit.part === 'play') { app.playLoop(hit.w.id); return; }
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { app.stop(); app.toggleSelect(hit.w.id); return; }
       if (app.play && app.play.loop !== hit.w.id) app.stop();
-      app.select(hit.w.id);
+      // Pressing on a window of a multi-selection keeps the group while it is dragged; a plain click narrows it (in up).
+      if (app.isSelected(hit.w.id) && hit.part === 'body') app.focus(hit.w.id);
+      else app.select(hit.w.id);
       if (hit.part === 'key') { this.drag = { kind: 'key', win: hit.w, key: hit.key!, moved: false, x0: x }; return; }
       if (hit.part === 'l' || hit.part === 'r') { this.drag = { kind: 'resize', win: hit.w, side: hit.part, orig }; return; }
       if (dbl) { this.show(hit.w.start, hit.w.start + hit.w.len); return; }
@@ -318,7 +321,7 @@ export class Timeline {
     switch (d.kind) {
       case 'move':
         if (d.moved) app.store.commit();
-        else app.seek(Math.floor(this.frameAt(x)));
+        else { app.select(d.win.id); app.seek(Math.floor(this.frameAt(x))); }
         break;
       case 'create':
         if (d.win) app.store.commit();
@@ -428,7 +431,9 @@ export class Timeline {
       if (hit) {
         cursor = hit.part === 'body' ? 'grab' : hit.part === 'play' ? 'pointer' : 'ew-resize';
         const n = this.app.data.windows.filter(o => o.track === hit.w.track && o.start < hit.w.start).length + 1;
-        text = hit.part === 'play' ? (this.app.play?.loop === hit.w.id ? 'Stop loop' : 'Loop window')
+        const group = this.app.isSelected(hit.w.id) && this.app.extraSel.length > 0;
+        const playing = this.app.play?.loop === hit.w.id || !!this.app.play?.seq?.includes(hit.w.id);
+        text = hit.part === 'play' ? (playing ? (group ? 'Stop' : 'Stop loop') : group ? 'Play selected windows in sequence' : 'Loop window')
           : hit.part === 'key' ? `Key at frame ${hit.key!.f} · drag to retime`
           : `Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
       } else if (this.app.data.tracks[this.laneAt(y)]) cursor = 'crosshair';
@@ -598,7 +603,7 @@ export class Timeline {
     const x0 = this.x(w.start), x1 = this.x(w.start + w.len);
     if (x1 < HEADER_W || x0 > this.w) return;
     const y = this.laneY(idx) + 2, h = LANE_H - 4;
-    const sel = w.id === app.selWin;
+    const sel = app.isSelected(w.id);
     const looping = app.play?.loop === w.id;
     const width = Math.max(2, x1 - x0);
     ctx.globalAlpha = sel || looping ? 1 : 0.72;

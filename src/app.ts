@@ -26,7 +26,10 @@ export interface Media {
 }
 
 interface Play {
+  /** The window being looped; while playing a sequence, the one currently playing. */
   loop: string | null;
+  /** Windows played one after another, in timeline order, wrapping at the end. */
+  seq: string[] | null;
   nextDue: number;
   /** The loop range the audio was started with, to notice when the window is edited. */
   audioLoop: string;
@@ -64,6 +67,8 @@ export class App {
   media: Media | null = null;
   playhead = 0;
   selWin: string | null = null;
+  /** Further windows selected alongside selWin (Ctrl/Shift-click), for sequence playback and export. */
+  extraSel: string[] = [];
   selTrack: string;
   play: Play | null = null;
   readonly audio = new AudioPlayer();
@@ -293,20 +298,63 @@ export class App {
 
   select(id: string | null) {
     this.selWin = id;
+    this.extraSel = [];
     const w = this.win(id);
     if (w) this.selTrack = w.track;
     this.saveSoon();
     this.invalidate(true);
   }
 
+  /** Add a window to the selection (it becomes the one the inspector edits), or take it out. */
+  toggleSelect(id: string) {
+    if (!this.win(id)) return;
+    if (id === this.selWin) this.selWin = this.extraSel.pop() ?? null;
+    else if (this.extraSel.includes(id)) this.extraSel = this.extraSel.filter(o => o !== id);
+    else {
+      if (this.selWin) this.extraSel.push(this.selWin);
+      this.selWin = id;
+    }
+    const w = this.selected;
+    if (w) this.selTrack = w.track;
+    this.saveSoon();
+    this.invalidate(true);
+  }
+
+  /** Make a selected window the one the inspector edits, keeping the rest of the selection. */
+  focus(id: string) {
+    if (!this.extraSel.includes(id)) return;
+    this.extraSel = this.extraSel.filter(o => o !== id);
+    if (this.selWin) this.extraSel.push(this.selWin);
+    this.selWin = id;
+    this.selTrack = this.win(id)!.track;
+    this.invalidate(true);
+  }
+
+  isSelected(id: string) {
+    return id === this.selWin || this.extraSel.includes(id);
+  }
+
+  /** Every selected window, in timeline order (by start, then track). */
+  get selection(): Win[] {
+    return this.inTimelineOrder(this.data.windows.filter(w => this.isSelected(w.id)));
+  }
+
+  /** A sorted copy: by start frame, then by track. The order combined windows play in. */
+  inTimelineOrder(wins: Win[]): Win[] {
+    const order = (w: Win) => this.data.tracks.findIndex(t => t.id === w.track);
+    return [...wins].sort((a, b) => a.start - b.start || order(a) - order(b));
+  }
+
   selectTrack(id: string) {
     this.selTrack = id;
-    if (this.selected && this.selected.track !== id) this.selWin = null;
+    if (this.selected && this.selected.track !== id) this.select(null);
     this.invalidate(true);
   }
 
   private fixSelection() {
     if (this.selWin && !this.win(this.selWin)) this.selWin = null;
+    this.extraSel = this.extraSel.filter(id => id !== this.selWin && this.win(id));
+    if (!this.selWin && this.extraSel.length) this.selWin = this.extraSel.pop()!;
     if (!this.track(this.selTrack)) this.selTrack = this.data.tracks[0]?.id;
   }
 
@@ -317,8 +365,12 @@ export class App {
     if (!total) return;
     f = Math.max(0, Math.min(total - 1, Math.round(f)));
     if (this.play?.loop) {
-      const w = this.win(this.play.loop);
-      if (w && (f < w.start || f >= w.start + w.len)) this.stop();
+      // Seeking inside a looped window keeps playing; in a sequence, from whichever window holds f.
+      const play = this.play;
+      const ids = [play.loop!, ...(play.seq ?? []).filter(id => id !== play.loop)];
+      const inside = ids.map(id => this.win(id)).find(w => w && f >= w.start && f < w.start + w.len);
+      if (!inside) this.stop();
+      else play.loop = inside.id;
     }
     if (f === this.playhead) return;
     this.playhead = f;
@@ -343,21 +395,28 @@ export class App {
     // loop starts must fit the cache together, or eviction forces re-decodes.
     const cap = frames.capacity;
     if (this.play) {
-      const w = this.win(this.play.loop);
-      const lo = w ? w.start : 0, hi = w ? w.start + w.len : tb.count;
+      const play = this.play;
+      const w = this.win(play.loop);
+      const loop = w ? this.playOrder() : [];
+      const span = loop.reduce((s, o) => s + o.len, 0);
       const room = Math.max(4, cap - 14);
-      const whole = !!w && w.len <= room;
-      const ahead = whole ? w!.len : Math.min(Math.max(4, Math.floor(room / 2)), Math.ceil(tb.fps * 1.5) + 8);
-      for (let i = 1; i < ahead; i++) {
-        let f = this.playhead + i;
-        if (f >= hi) { if (!w) break; f = lo + (f - lo) % (hi - lo); }
-        list.push(tb.src(f));
+      const whole = !!w && span <= room;
+      const ahead = whole ? span : Math.min(Math.max(4, Math.floor(room / 2)), Math.ceil(tb.fps * 1.5) + 8);
+      let at: { f: number; loop: string | null } | null = { f: this.playhead, loop: play.loop };
+      for (let i = 1; i < ahead && at; i++) {
+        at = this.advance(at.f, at.loop);
+        if (at) list.push(tb.src(at.f));
       }
       if (w) {
-        // Short loops stay cached whole; long ones keep their first frames so the wrap is seamless.
+        // Short loops stay cached whole; long ones keep the first frames of the window that
+        // plays next, so the wrap (or the jump to the next window of a sequence) is seamless.
         const pin: number[] = [];
-        const n = whole ? w.len : Math.max(0, room - ahead);
-        for (let f = w.start; f < w.start + n; f++) pin.push(tb.src(f));
+        if (whole) for (const o of loop) for (let f = o.start; f < o.start + o.len; f++) pin.push(tb.src(f));
+        else {
+          const next = loop[(loop.indexOf(w) + 1) % loop.length];
+          const n = Math.min(next.len, Math.max(0, room - ahead));
+          for (let f = next.start; f < next.start + n; f++) pin.push(tb.src(f));
+        }
         frames.pin(pin);
       }
     } else {
@@ -373,20 +432,27 @@ export class App {
     if (this.play) { this.stop(); return; }
     if (!this.media) return;
     if (this.playhead >= this.total - 1) this.seek(0);
-    this.play = { loop: null, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
+    this.play = { loop: null, seq: null, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
     this.startAudio();
     this.media.thumbs.setPaused(true);
     this.updateWants();
     this.invalidate(true);
   }
 
+  /**
+   * Loop a window. When it is part of a multi-selection, play every selected window one
+   * after another in timeline order instead, as a combined export would.
+   */
   playLoop(id: string) {
     const w = this.win(id);
     if (!w || !this.media) return;
-    if (this.play?.loop === id) { this.stop(); return; }
-    this.select(id);
-    this.playhead = w.start;
-    this.play = { loop: id, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
+    if (this.play?.loop === id || this.play?.seq?.includes(id)) { this.stop(); return; }
+    const sel = this.isSelected(id) ? this.selection : [];
+    const seq = sel.length > 1 ? sel.map(o => o.id) : null;
+    if (!seq) this.select(id);
+    const first = seq ? sel[0] : w;
+    this.playhead = first.start;
+    this.play = { loop: first.id, seq, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
     this.startAudio();
     this.media.thumbs.setPaused(true);
     this.updateWants();
@@ -413,16 +479,34 @@ export class App {
     if (now - play.nextDue > 250) play.nextDue = now;
     let advanced = false;
     while (now >= play.nextDue) {
-      let next = this.playhead + 1;
-      if (w && next >= w.start + w.len) next = w.start;
-      if (!w && next >= m.tb.count) { this.stop(); break; }
-      if (!m.frames.has(m.tb.src(next))) break;
-      this.playhead = next;
+      const next = this.advance(this.playhead, play.loop);
+      if (!next) { this.stop(); break; }
+      if (!m.frames.has(m.tb.src(next.f))) break;
+      this.playhead = next.f;
+      play.loop = next.loop;
       play.nextDue += dt;
       advanced = true;
     }
     if (advanced) { this.updateWants(); this.uiDirty = true; }
     if (this.play) this.syncAudio(now);
+  }
+
+  /** The windows the current playback cycles through: the sequence, or the looped window alone. */
+  private playOrder(): Win[] {
+    const p = this.play;
+    if (!p?.loop) return [];
+    if (!p.seq) { const w = this.win(p.loop); return w ? [w] : []; }
+    return p.seq.map(id => this.win(id)).filter((w): w is Win => !!w);
+  }
+
+  /** The frame (and looped window) playback moves to after f, or null at the end of the video. */
+  private advance(f: number, loop: string | null): { f: number; loop: string | null } | null {
+    const w = this.win(loop);
+    if (!w) return f + 1 < this.total ? { f: f + 1, loop } : null;
+    if (f + 1 < w.start + w.len) return { f: f + 1, loop };
+    const order = this.playOrder();
+    const next = order[(order.indexOf(w) + 1) % order.length] ?? w;
+    return { f: next.start, loop: next.id };
   }
 
   /** Media time (the clock audio timestamps use) at the start of output frame f. */

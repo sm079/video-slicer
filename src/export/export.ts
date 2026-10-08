@@ -2,7 +2,7 @@ import type { AudioCodec } from 'mediabunny';
 import type { App } from '../app';
 import { clipAudio, wav } from '../media/audio';
 import type { AudioInfo, Demux } from '../media/demux';
-import { cropAt, outputRegion, outputSize, type Track, type Win } from '../model/project';
+import { cropAt, fitAspect, outputRegion, outputSize, type Track, type Win } from '../model/project';
 import { renderOutput } from '../model/render';
 
 export type Format = 'mp4' | 'webm' | 'png';
@@ -15,6 +15,8 @@ export interface ExportOptions {
   manifest: boolean;
   /** Carry the source audio under each clip (ignored when the video has none). */
   audio: boolean;
+  /** Join the windows, in timeline order, into a single clip. */
+  combine: boolean;
 }
 
 export interface Writer {
@@ -79,6 +81,13 @@ export function clipName(app: App, w: Win, track: Track) {
   const base = safe(app.media!.file.name.replace(/\.[^.]+$/, ''));
   const n = app.data.windows.filter(o => o.track === w.track && o.start < w.start).length + 1;
   return `${base}_${safe(track.name)}_${String(n).padStart(3, '0')}_f${w.start}-${w.start + w.len - 1}`;
+}
+
+/** Name of a clip joining `wins` (in play order). */
+export function combinedName(app: App, wins: Win[]) {
+  const base = safe(app.media!.file.name.replace(/\.[^.]+$/, ''));
+  const last = wins[wins.length - 1];
+  return `${base}_combined_${wins.length}x_f${wins[0].start}-${last.start + last.len - 1}`;
 }
 
 /**
@@ -190,94 +199,116 @@ async function encoder(format: Format, quality: Quality, w: number, h: number, f
   };
 }
 
-/** Render and write every window. Preview and export share renderOutput and the bitmap copy. */
+/** One output file: a window, or several windows played one after another. */
+interface Job { name: string; segs: Win[] }
+
+function jobs(app: App, opts: ExportOptions): Job[] {
+  const wins = app.inTimelineOrder(opts.windows);
+  if (!opts.combine || wins.length < 2) return wins.map(w => ({ name: clipName(app, w, app.track(w.track)!), segs: [w] }));
+  return [{ name: combinedName(app, wins), segs: wins }];
+}
+
+/** Render and write every clip. Preview and export share renderOutput and the bitmap copy. */
 export async function runExport(app: App, opts: ExportOptions, writer: Writer, progress: Progress, signal: AbortSignal) {
   const m = app.media!;
   const { tb, demux } = m;
-  const clips = [...opts.windows].sort((a, b) => a.start - b.start);
+  const list = jobs(app, opts);
   const manifest: unknown[] = [];
   const stream = opts.audio ? demux.audio : null;
   const plan = stream && opts.format !== 'png' ? { ...await audioPlan(opts.format, opts.quality, stream.info), inputRate: stream.info.sampleRate } : null;
-  for (let c = 0; c < clips.length; c++) {
-    const w = clips[c];
-    const track = app.track(w.track)!;
-    const out = outputSize(w, track);
-    const name = clipName(app, w, track);
-    const srcs = Array.from({ length: w.len }, (_, i) => tb.src(w.start + i));
+  for (let c = 0; c < list.length; c++) {
+    const { name, segs } = list[c];
+    // A combined clip takes the first window's size; the others are trimmed to its shape and scaled.
+    const out = outputSize(segs[0], app.track(segs[0].track)!);
+    const frames = segs.reduce((s, w) => s + w.len, 0);
     const canvas = new OffscreenCanvas(out.w, out.h);
     const ctx = canvas.getContext('2d', { alpha: false })!;
     const enc = opts.format === 'png' ? null : await encoder(opts.format, opts.quality, out.w, out.h, tb.fps, canvas, plan);
-    const frames = decodeRange(demux, srcs[0], srcs[srcs.length - 1], signal);
-    // Audio is the source audio from the clip's first frame for exactly the clip's duration,
-    // fed alongside the frames so the muxer interleaves without buffering a whole track.
-    const audio = stream ? clipAudio(stream, app.mediaTime(w.start), w.len / tb.fps) : null;
     const wavChunks: Float32Array[][] = [];
-    let audioFrames = 0;
-    const feedAudio = async (until: number) => {
-      if (!audio) return;
-      const want = until * stream!.info.sampleRate;
-      while (audioFrames < want) {
-        const n = await audio.next();
-        if (n.done) break;
-        if (enc) await enc.addAudio(n.value, audioFrames / stream!.info.sampleRate);
-        else wavChunks.push(n.value);
-        audioFrames += n.value[0].length;
-      }
-    };
-    let prev: { idx: number; frame: VideoFrame } | null = null;
-    let look: { idx: number; frame: VideoFrame } | null = null;
-    let ended = false;
-    // Latest decoded frame at or before s (repeats when conforming up, skips when conforming down).
-    const frameFor = async (s: number) => {
-      for (;;) {
-        if (!look && !ended) {
-          const n = await frames.next();
-          if (n.done) ended = true; else look = n.value;
-        }
-        if (look && look.idx <= s) { prev?.frame.close(); prev = look; look = null; continue; }
-        return (prev ?? look)?.frame ?? null;
-      }
-    };
+    let audioFrames = 0, done = 0;
+    const parts: Record<string, unknown>[] = [];
     try {
-      for (let i = 0; i < w.len; i++) {
-        if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
-        const frame = await frameFor(srcs[i]);
-        if (!frame) throw new Error(`Could not decode source frame ${srcs[i]} for ${name}.`);
-        const bmp = await createImageBitmap(frame);
-        renderOutput(ctx, bmp, m.orient, outputRegion(cropAt(w, i), cropAt(w, 0), track), out.w, out.h);
-        bmp.close();
-        if (enc) await enc.add(i);
-        else await writer.write(`${name}/${String(i).padStart(5, '0')}.png`, await canvas.convertToBlob({ type: 'image/png' }));
-        await feedAudio((i + 1) / tb.fps);
-        progress({ clip: c, clips: clips.length, frame: i + 1, frames: w.len, name });
+      for (const w of segs) {
+        const track = app.track(w.track)!;
+        const srcs = Array.from({ length: w.len }, (_, i) => tb.src(w.start + i));
+        const decoded = decodeRange(demux, srcs[0], srcs[srcs.length - 1], signal);
+        // Audio is the source audio from the window's first frame for exactly its duration,
+        // fed alongside the frames so the muxer interleaves without buffering a whole track.
+        const audio = stream ? clipAudio(stream, app.mediaTime(w.start), w.len / tb.fps) : null;
+        let segAudio = 0;
+        const feedAudio = async (until: number) => {
+          if (!audio) return;
+          const want = until * stream!.info.sampleRate;
+          while (segAudio < want) {
+            const n = await audio.next();
+            if (n.done) break;
+            if (enc) await enc.addAudio(n.value, audioFrames / stream!.info.sampleRate);
+            else wavChunks.push(n.value);
+            segAudio += n.value[0].length;
+            audioFrames += n.value[0].length;
+          }
+        };
+        let prev: { idx: number; frame: VideoFrame } | null = null;
+        let look: { idx: number; frame: VideoFrame } | null = null;
+        let ended = false;
+        // Latest decoded frame at or before s (repeats when conforming up, skips when conforming down).
+        const frameFor = async (s: number) => {
+          for (;;) {
+            if (!look && !ended) {
+              const n = await decoded.next();
+              if (n.done) ended = true; else look = n.value;
+            }
+            if (look && look.idx <= s) { prev?.frame.close(); prev = look; look = null; continue; }
+            return (prev ?? look)?.frame ?? null;
+          }
+        };
+        try {
+          for (let i = 0; i < w.len; i++) {
+            if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
+            const frame = await frameFor(srcs[i]);
+            if (!frame) throw new Error(`Could not decode source frame ${srcs[i]} for ${name}.`);
+            const bmp = await createImageBitmap(frame);
+            const region = fitAspect(outputRegion(cropAt(w, i), cropAt(w, 0), track), out.w / out.h);
+            renderOutput(ctx, bmp, m.orient, region, out.w, out.h);
+            bmp.close();
+            if (enc) await enc.add(done);
+            else await writer.write(`${name}/${String(done).padStart(5, '0')}.png`, await canvas.convertToBlob({ type: 'image/png' }));
+            done++;
+            await feedAudio((i + 1) / tb.fps);
+            progress({ clip: c, clips: list.length, frame: done, frames, name });
+          }
+          await feedAudio(Infinity);
+        } finally {
+          (prev as { frame: VideoFrame } | null)?.frame.close();
+          (look as { frame: VideoFrame } | null)?.frame.close();
+          await decoded.return(undefined);
+          await audio?.return(undefined);
+        }
+        parts.push({
+          track: track.name,
+          start: w.start,
+          end: w.start + w.len - 1,
+          frames: w.len,
+          startTime: tb.time(w.start),
+          sourceFrames: [srcs[0] - demux.index.first, srcs[srcs.length - 1] - demux.index.first],
+          keys: w.keys,
+          // The source area each key puts in the output: the crop trimmed to the output's shape.
+          regions: w.keys.map(k => ({ f: k.f, c: fitAspect(outputRegion(k.c, cropAt(w, 0), track), out.w / out.h) })),
+        });
       }
-      await feedAudio(Infinity);
       if (enc) await writer.write(`${name}.${opts.format}`, await enc.finish());
       else if (stream) await writer.write(`${name}/audio.wav`, wav(wavChunks, stream.info.sampleRate, stream.info.channels));
     } catch (e) {
       enc?.cancel();
       throw e;
-    } finally {
-      (prev as { frame: VideoFrame } | null)?.frame.close();
-      (look as { frame: VideoFrame } | null)?.frame.close();
-      await frames.return(undefined);
-      await audio?.return(undefined);
     }
-    manifest.push({
-      file: opts.format === 'png' ? `${name}/` : `${name}.${opts.format}`,
-      track: track.name,
-      start: w.start,
-      end: w.start + w.len - 1,
-      frames: w.len,
-      startTime: tb.time(w.start),
-      sourceFrames: [srcs[0] - demux.index.first, srcs[srcs.length - 1] - demux.index.first],
-      width: out.w,
-      height: out.h,
-      audio: stream ? (plan ? { codec: plan.codec, sampleRate: plan.sampleRate, channels: plan.channels } : { file: `${name}/audio.wav`, sampleRate: stream.info.sampleRate, channels: stream.info.channels }) : null,
-      keys: w.keys,
-      // The source area each key puts in the output: the crop trimmed to the output's shape.
-      regions: w.keys.map(k => ({ f: k.f, c: outputRegion(k.c, cropAt(w, 0), track) })),
-    });
+    const file = opts.format !== 'png' ? `${name}.${opts.format}` : `${name}/`;
+    const audioInfo = !stream ? null : plan ? { codec: plan.codec, sampleRate: plan.sampleRate, channels: plan.channels }
+      : { file: `${name}/audio.wav`, sampleRate: stream.info.sampleRate, channels: stream.info.channels };
+    // A single window keeps its fields at the top level; a combined clip lists its parts in play order.
+    manifest.push(parts.length === 1
+      ? { file, ...parts[0], width: out.w, height: out.h, audio: audioInfo }
+      : { file, frames, width: out.w, height: out.h, audio: audioInfo, segments: parts });
   }
   if (opts.manifest) {
     const body = {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
+  snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, fitAspect, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
   sanitizeProject, presetFrom, presetMatches, presetValues, sanitizePresets, PRESET_DEFAULTS, type Win, type Track,
 } from '../src/model/project.ts';
 import { Timebase, detectFps, parseFps } from '../src/media/timebase.ts';
@@ -143,4 +143,12 @@ test('parseFps', () => {
   assert.equal(parseFps(' 24 '), 24);
   assert.equal(parseFps('abc'), null);
   assert.equal(parseFps('0'), null);
+});
+
+test('fitAspect trims a region to the output shape about its centre', () => {
+  const same = crop(10, 20, 160, 90);
+  assert.equal(fitAspect(same, 16 / 9), same, 'already the right shape');
+  assert.deepEqual(fitAspect(crop(0, 0, 200, 100), 1), crop(50, 0, 100, 100), 'too wide: sides trimmed');
+  assert.deepEqual(fitAspect(crop(0, 0, 100, 200), 2), crop(0, 75, 100, 50), 'too tall: top and bottom trimmed');
+  assert.deepEqual(fitAspect(crop(0, 0, 200, 100, 30), 1), crop(50, 0, 100, 100, 30), 'rotation kept');
 });

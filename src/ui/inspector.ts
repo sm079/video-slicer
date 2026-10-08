@@ -288,7 +288,7 @@ export class Inspector {
         const secs = m.tb.time(w.start + w.len - 1) - m.tb.time(w.start) + 1 / m.tb.fps;
         this.text('win-times', `${timecode(m.tb.time(w.start))} – ${timecode(m.tb.time(w.start + w.len))} · ${secs.toFixed(2)} s`);
         this.attr('#win-len-lbl', 'data-tip', t.rule.a > 1 ? `Snaps to ${ruleText(t.rule)}` : null);
-        this.root.querySelector('[data-act="loop"]')?.classList.toggle('on', a.play?.loop === w.id);
+        this.root.querySelector('[data-act="loop"]')?.classList.toggle('on', a.play?.loop === w.id || !!a.play?.seq?.includes(w.id));
         const inside = a.playhead >= w.start && a.playhead < w.start + w.len;
         this.text('crop-where', w.animate ? (inside ? `frame ${a.playhead - w.start}` : 'outside window') : '');
         if (w.animate) {

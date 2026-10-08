@@ -142,6 +142,17 @@ export function outputRegion(c: Crop, c0: Crop, track: Track): Crop {
   return { x: c.x + dx, y: c.y + dy, w, h, r: c.r };
 }
 
+/**
+ * The centred part of a region with the given aspect ratio, so it fills an output of that shape
+ * without stretching. A region already of that shape comes back unchanged.
+ */
+export function fitAspect(c: Crop, aspect: number): Crop {
+  const a = c.w / c.h;
+  if (Math.abs(a - aspect) < 1e-6 * aspect) return c;
+  const w = a > aspect ? c.h * aspect : c.w, h = a > aspect ? c.h : c.w / aspect;
+  return { ...c, x: c.x + (c.w - w) / 2, y: c.y + (c.h - h) / 2, w, h };
+}
+
 /** The aspect ratio a track forces on crops, or null when free. */
 export function trackAspect(track: Track): number | null {
   return track.outW > 0 && track.outH > 0 ? track.outW / track.outH : null;
