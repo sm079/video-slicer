@@ -41,6 +41,7 @@
       <button id="t-end" title="Last frame (End)">⏭</button>
       <label class="frame">Frame <input id="t-frame" type="number" min="0" step="1"> <span id="t-total" class="muted"></span></label>
       <span id="t-time" class="mono muted"></span>
+      <span id="t-audio" class="audio-ctl" hidden><button id="t-mute" title="Mute (M)">🔊</button><input id="t-vol" type="range" min="0" max="1" step="0.01" title="Volume"></span>
       <span class="spacer"></span>
       <button id="t-new" title="New window at the playhead (N)">+ Window</button>
       <button id="t-track" title="Add a track">+ Track</button>
@@ -66,9 +67,10 @@
         <select id="x-quality"><option value="high">High</option><option value="very-high" selected>Very high</option><option value="max">Maximum</option></select></label>
       <label class="row"><span>Save to</span>
         <select id="x-dest"><option value="folder">A folder…</option><option value="zip">ZIP download</option></select></label>
+      <label class="check"><input id="x-audio" type="checkbox" checked> <span id="x-audio-label">Include audio</span></label>
       <label class="check"><input id="x-manifest" type="checkbox" checked> Write manifest.json (ranges, crops, sizes)</label>
       <p id="x-summary" class="muted small"></p>
-      <p class="muted small">Video only, at the project frame rate. Every output frame is rendered exactly as the Output preview shows it.</p>
+      <p class="muted small">At the project frame rate. Every output frame is rendered exactly as the Output preview shows it. Audio is the source audio under each clip, cut to the clip's length: AAC (or Opus) in MP4, Opus in WebM, and a WAV next to PNG frames.</p>
       <div id="x-progress" class="progress" hidden><div class="bar"><div></div></div><span class="small muted"></span></div>
       <div class="btns end">
         <button id="x-cancel" value="cancel" formnovalidate>Close</button>
@@ -105,6 +107,7 @@
         <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Previous / next window</td><td><kbd>Tab</kbd></td><td>Next window (all tracks)</td></tr>
         <tr><td><kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>Zoom in / out / fit</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo (<kbd>Shift</kbd> redo)</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Stop / deselect</td><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Mute / unmute</td><td></td><td></td></tr>
       </table>
       <div class="btns end"><button value="ok" class="primary">Close</button></div>
     </form>

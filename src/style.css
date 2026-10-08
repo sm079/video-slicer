@@ -101,6 +101,10 @@ body.dragging .drop { display: grid; border-color: var(--accent); background: rg
 .transport .play.looping { background: #2c5fd0; border-color: #2c5fd0; }
 .frame { display: flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--dim); }
 .frame input { width: 84px; }
+.audio-ctl { display: flex; align-items: center; gap: 4px; margin-left: 6px; }
+.audio-ctl[hidden] { display: none; }
+.audio-ctl button { min-width: 34px; padding: 3px 6px; }
+.audio-ctl input { width: 80px; padding: 0; border: 0; background: none; accent-color: var(--accent); }
 .split, .vsplit { background: var(--line); touch-action: none; }
 .split { cursor: row-resize; }
 .vsplit { cursor: col-resize; }

@@ -1,3 +1,4 @@
+import { AudioPlayer } from './media/audio';
 import { openVideo, type Demux, type UntaggedColor } from './media/demux';
 import { FrameServer } from './media/frames';
 import { hashFile } from './media/hash';
@@ -27,7 +28,13 @@ export interface Media {
 interface Play {
   loop: string | null;
   nextDue: number;
+  /** The loop range the audio was started with, to notice when the window is edited. */
+  audioLoop: string;
+  audioSynced: number;
 }
+
+/** Audio further than this from the picture is restarted at the picture's time. */
+const AUDIO_DRIFT = 0.1;
 
 const CACHE_KEY = 'vs.cacheMB';
 const COLOR_KEY = 'vs.untaggedColor';
@@ -58,6 +65,7 @@ export class App {
   selWin: string | null = null;
   selTrack: string;
   play: Play | null = null;
+  readonly audio = new AudioPlayer();
   status = '';
   /** Called once per animation frame when anything visible changed. */
   private drawers: (() => void)[] = [];
@@ -276,7 +284,7 @@ export class App {
     }
     if (f === this.playhead) return;
     this.playhead = f;
-    if (this.play) this.play.nextDue = performance.now() + 1000 / this.media!.tb.fps;
+    if (this.play) { this.play.nextDue = performance.now() + 1000 / this.media!.tb.fps; this.startAudio(); }
     else this.saveSoon();
     this.updateWants();
     this.invalidate(true);
@@ -327,7 +335,8 @@ export class App {
     if (this.play) { this.stop(); return; }
     if (!this.media) return;
     if (this.playhead >= this.total - 1) this.seek(0);
-    this.play = { loop: null, nextDue: performance.now() };
+    this.play = { loop: null, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
+    this.startAudio();
     this.media.thumbs.setPaused(true);
     this.updateWants();
     this.invalidate(true);
@@ -339,7 +348,8 @@ export class App {
     if (this.play?.loop === id) { this.stop(); return; }
     this.select(id);
     this.playhead = w.start;
-    this.play = { loop: id, nextDue: performance.now() };
+    this.play = { loop: id, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
+    this.startAudio();
     this.media.thumbs.setPaused(true);
     this.updateWants();
     this.invalidate(true);
@@ -348,6 +358,7 @@ export class App {
   stop() {
     if (!this.play) return;
     this.play = null;
+    this.audio.stop();
     this.media?.frames.pin([]);
     this.media?.thumbs.setPaused(false);
     this.saveSoon();
@@ -373,6 +384,51 @@ export class App {
       advanced = true;
     }
     if (advanced) { this.updateWants(); this.uiDirty = true; }
+    if (this.play) this.syncAudio(now);
+  }
+
+  /** Media time (the clock audio timestamps use) at the start of output frame f. */
+  mediaTime(f: number) {
+    const m = this.media!;
+    return m.demux.index.pts[m.demux.index.first] + m.tb.time(f);
+  }
+
+  /** Media range a loop plays; its length is the loop's duration on the frame clock. */
+  private loopRange(w: Win): [number, number] {
+    const a = this.mediaTime(w.start);
+    return [a, a + w.len / this.media!.tb.fps];
+  }
+
+  /** (Re)start the audio at the playhead's media time. */
+  private startAudio(at = this.playhead, frac = 0) {
+    const m = this.media, play = this.play;
+    if (!m || !play) return;
+    if (!m.demux.audio) return;
+    const w = this.win(play.loop);
+    const loop = w ? this.loopRange(w) : null;
+    play.audioLoop = loop ? loop.join() : '';
+    play.audioSynced = performance.now();
+    this.audio.start(m.demux.audio, this.mediaTime(at) + frac, loop);
+  }
+
+  /** Keep the audio within AUDIO_DRIFT of the picture; restart it after seeks, stalls and loop edits. */
+  private syncAudio(now: number) {
+    const m = this.media!, play = this.play!;
+    const pos = this.audio.position();
+    if (pos == null || !m.demux.audio) return;
+    const dt = 1000 / m.tb.fps;
+    // How far into the current frame's display time we are.
+    const frac = Math.max(0, Math.min(dt, now - (play.nextDue - dt))) / 1000;
+    const w = this.win(play.loop);
+    const loop = w ? this.loopRange(w) : null;
+    if ((loop ? loop.join() : '') !== play.audioLoop) { this.startAudio(this.playhead, frac); return; }
+    let drift = pos - (this.mediaTime(this.playhead) + frac);
+    if (loop) {
+      const len = loop[1] - loop[0];
+      drift = ((drift % len) + len) % len;
+      drift = Math.min(drift, len - drift);
+    }
+    if (Math.abs(drift) > AUDIO_DRIFT && now - play.audioSynced > 300) this.startAudio(this.playhead, frac);
   }
 
   // -------------------------------------------------------------- windows

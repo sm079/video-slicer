@@ -1,6 +1,6 @@
 # Video Slicer
 
-Cut a video into frame-exact clips in the browser. Pick an output frame rate, draw windows on any number of tracks, give each window a crop (rotated and keyframed if you like), and export every window as its own MP4, WebM or PNG sequence. Nothing is uploaded: decoding, rendering and encoding all run locally in the tab.
+Cut a video into frame-exact clips in the browser. Pick an output frame rate, draw windows on any number of tracks, give each window a crop (rotated and keyframed if you like), and export every window as its own MP4, WebM or PNG sequence, with the audio under it. Nothing is uploaded: decoding, rendering and encoding all run locally in the tab.
 
 ## Run
 
@@ -22,6 +22,7 @@ Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder need
 5. **Loop.** Click ▶ on a window, or press <kbd>L</kbd>, to loop it. Short windows stay fully cached and loop without re-decoding.
 6. **Crop.** Drag the box to move it, the handles to resize, and the round handle to rotate. Drag outside the box to draw a new one. A track's output size can be derived from the crop (sides snapped to a multiple of ÷), or fixed with W × H, which locks the crop's shape. Turn on **Animate** to keyframe the crop: every edit then keys it at the playhead, and keys interpolate linearly.
 7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys.
+8. **Audio** plays along with playback and loops (<kbd>M</kbd> mutes; the volume sits in the transport bar). Exports carry the source audio from each clip's first frame for exactly the clip's duration: AAC in MP4 (Opus if the browser has no AAC encoder), Opus in WebM, and `audio.wav` beside PNG frames. Audio is resampled to 48 kHz only when the encoder can't take the source rate, and mixed down to stereo.
 
 Press <kbd>?</kbd> in the app for all shortcuts.
 
@@ -36,7 +37,8 @@ The editor state (windows, tracks, fps, playhead, selection and timeline zoom) a
 
 ## Limits
 
-- Export is video only; audio is not carried over.
+- Playback audio follows the picture: it is restarted at the playhead when it drifts more than 0.1 s away, so a stall while 4K frames decode is heard as a short skip.
+- Encoder delay the container can't signal stays in the audio, as it does in ffmpeg (for example the ~25 ms an MP3 in AVI starts late). WebM clips start about 7 ms late from Opus pre-skip.
 - At 4K a 1 GB cache holds about 30 frames. Playback stays real-time, but loops longer than that decode while they play. A random seek costs a decode from the previous keyframe (about 0.3 s for a 2-second GOP at 4K).
 - Containers on the ffmpeg path (AVI, FLV, …) have no sample table, so the first open reads through the whole file to build the index.
 - MP4 export uses H.264, which needs even output sides (÷ of 2 or more).

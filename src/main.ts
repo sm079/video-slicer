@@ -113,6 +113,15 @@ $('t-track').onclick = () => app.media && app.addTrack();
 $('t-zin').onclick = () => timeline.zoomBy(1.6);
 $('t-zout').onclick = () => timeline.zoomBy(1 / 1.6);
 $('t-fit').onclick = () => timeline.fit();
+const muteBtn = $('t-mute'), volInput = $<HTMLInputElement>('t-vol');
+const showVolume = () => {
+  muteBtn.textContent = app.audio.muted || app.audio.volume === 0 ? '🔇' : '🔊';
+  volInput.value = String(app.audio.muted ? 0 : app.audio.volume);
+};
+muteBtn.onclick = () => { app.audio.muted = !app.audio.muted; if (!app.audio.muted && app.audio.volume === 0) app.audio.volume = 1; showVolume(); };
+volInput.oninput = () => { app.audio.volume = Number(volInput.value); app.audio.muted = false; showVolume(); };
+volInput.onchange = () => volInput.blur();
+showVolume();
 const frameInput = $<HTMLInputElement>('t-frame');
 frameInput.onchange = () => { app.stop(); app.seek(Number(frameInput.value) || 0); frameInput.blur(); };
 
@@ -129,6 +138,7 @@ app.onDraw(() => {
 app.onUi(() => {
   const m = app.media;
   $('fileinfo').textContent = m ? `${m.file.name} · ${m.W}×${m.H} · ${(m.file.size / 1048576).toFixed(1)} MB` : '';
+  $('t-audio').hidden = !m?.demux.audio;
 });
 
 // -------------------------------------------------------- split handles
@@ -228,6 +238,7 @@ window.addEventListener('keydown', e => {
     case '+': case '=': handled(); timeline.zoomBy(1.6); break;
     case '-': case '_': handled(); timeline.zoomBy(1 / 1.6); break;
     case 'f': case 'F': handled(); timeline.fit(); break;
+    case 'm': case 'M': handled(); muteBtn.click(); break;
     case 'Escape': handled(); if (app.play) app.stop(); else app.select(null); break;
     case '?': handled(); ($<HTMLDialogElement>('help-dlg')).showModal(); break;
   }
@@ -239,6 +250,7 @@ $('help').onclick = () => $<HTMLDialogElement>('help-dlg').showModal();
 const dlg = $<HTMLDialogElement>('export-dlg');
 const xScope = $<HTMLSelectElement>('x-scope'), xFormat = $<HTMLSelectElement>('x-format');
 const xQuality = $<HTMLSelectElement>('x-quality'), xDest = $<HTMLSelectElement>('x-dest');
+const xAudio = $<HTMLInputElement>('x-audio');
 let abort: AbortController | null = null;
 if (!('showDirectoryPicker' in window)) { xDest.value = 'zip'; xDest.querySelector('option[value=folder]')!.setAttribute('disabled', ''); }
 
@@ -264,6 +276,12 @@ function openExport() {
   if (!app.data.windows.length) { app.toast('Create a window first: drag on a track or press N.'); return; }
   app.stop();
   xScope.value = app.selected && xScope.value === 'sel' ? 'sel' : xScope.value === 'sel' ? 'all' : xScope.value;
+  const audio = app.media.demux.audio;
+  xAudio.disabled = !audio;
+  if (!audio) xAudio.checked = false;
+  else if (xAudio.dataset.media !== app.media.hash) xAudio.checked = true;
+  xAudio.dataset.media = app.media.hash;
+  $('x-audio-label').textContent = audio ? 'Include audio' : 'Include audio (this video has none)';
   summarize();
   $('x-progress').hidden = true;
   dlg.showModal();
@@ -278,7 +296,10 @@ $('x-cancel').addEventListener('click', e => {
 $('x-go').onclick = async () => {
   const wins = exportWindows();
   if (!wins.length || abort) return;
-  const opts: ExportOptions = { windows: wins, format: xFormat.value as Format, quality: xQuality.value as Quality, manifest: $<HTMLInputElement>('x-manifest').checked };
+  const opts: ExportOptions = {
+    windows: wins, format: xFormat.value as Format, quality: xQuality.value as Quality,
+    manifest: $<HTMLInputElement>('x-manifest').checked, audio: xAudio.checked && !xAudio.disabled,
+  };
   let writer;
   const base = app.media!.file.name.replace(/\.[^.]+$/, '');
   try {

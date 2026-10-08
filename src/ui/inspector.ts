@@ -47,6 +47,7 @@ export class Inspector {
         <div class="kv"><span>File</span><b title="${esc(info.fileName)}">${esc(info.fileName)}</b></div>
         <div class="kv"><span>Size</span><b>${info.width}×${info.height}${info.rotation ? ` (rotated ${info.rotation}°)` : ''}</b></div>
         <div class="kv"><span>Codec</span><b>${esc(info.codec)} · ${esc(info.container)}</b></div>
+        <div class="kv"><span>Audio</span><b>${m.demux.audio ? `${esc(m.demux.audio.info.codec)} · ${(m.demux.audio.info.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz · ${m.demux.audio.info.channels} ch` : 'none'}</b></div>
         <div class="kv"><span>Color</span><b title="${esc(info.color)}">${esc(info.color)}</b></div>
         <div class="kv"><span>Source</span><b>${m.demux.index.count - m.demux.index.first} frames · ${esc(formatFps(m.sourceFps))} fps</b></div>
         <label class="row"><span>Output fps</span><input id="fps" type="text" placeholder="native (${esc(formatFps(m.sourceFps))})" spellcheck="false"><button data-act="native" title="Use the source frames one for one">Native</button></label>
