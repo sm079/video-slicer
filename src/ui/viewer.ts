@@ -1,5 +1,5 @@
 import type { App } from '../app';
-import type { Crop } from '../model/project';
+import { cropAt, outputRegion, outputSizeFor, type Crop } from '../model/project';
 import { cropCorners, rawToDisplay } from '../model/render';
 
 type Handle = { kind: 'move' } | { kind: 'rotate' } | { kind: 'resize'; sx: -1 | 0 | 1; sy: -1 | 0 | 1 } | { kind: 'draw' } | { kind: 'pan' };
@@ -168,7 +168,7 @@ export class Viewer {
       return { x: x0, y: y0, w, h: hgt, r: 0 };
     }
     if (h.kind !== 'resize') return c;
-    return resizeCrop(c, h.sx, h.sy, p, aspect, aspect ? 1 : app.currentTrack.div, e.altKey, app.media!.W, app.media!.H);
+    return resizeCrop(c, h.sx, h.sy, p, aspect, e.altKey, app.media!.W, app.media!.H);
   }
 
   private wheel(e: WheelEvent) {
@@ -256,6 +256,21 @@ export class Viewer {
     if (outside) ctx.setLineDash([6 * px, 4 * px]);
     ctx.strokeRect(-c.w / 2, -c.h / 2, c.w, c.h);
     ctx.setLineDash([]);
+    // The part that reaches the output, when the side multiples or output shape trim the crop.
+    const track = w ? app.track(w.track)! : app.currentTrack;
+    const c0 = w ? cropAt(w, 0) : c;
+    const reg = outputRegion(c, c0, track);
+    const trimmed = Math.abs(reg.w - c.w) > 0.05 || Math.abs(reg.h - c.h) > 0.05;
+    if (trimmed) {
+      // Only an unrotated region sits off-centre (on whole pixels), so the offset is along the crop's axes.
+      const lx = reg.x + reg.w / 2 - (c.x + c.w / 2), ly = reg.y + reg.h / 2 - (c.y + c.h / 2);
+      ctx.lineWidth = px;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.setLineDash([4 * px, 3 * px]);
+      ctx.strokeRect(lx - reg.w / 2, ly - reg.h / 2, reg.w, reg.h);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = color;
+    }
     // Handles.
     const hs = HANDLE * px;
     ctx.fillStyle = '#fff';
@@ -280,7 +295,8 @@ export class Viewer {
     ctx.stroke();
     ctx.restore();
     // Label.
-    const label = `${fmt(c.w)}×${fmt(c.h)}${c.r ? `  ${fmt(c.r)}°` : ''}${outside ? '  · playhead outside window' : ''}${!w ? '  · default crop' : ''}`;
+    const out = outputSizeFor(c0, track);
+    const label = `${fmt(c.w)}×${fmt(c.h)}${trimmed || out.w !== Math.round(c.w) || out.h !== Math.round(c.h) ? ` → ${out.w}×${out.h}` : ''}${c.r ? `  ${fmt(c.r)}°` : ''}${outside ? '  · playhead outside window' : ''}${!w ? '  · default crop' : ''}`;
     ctx.font = `${12 * px}px system-ui, sans-serif`;
     const tw = ctx.measureText(label).width;
     const top = pts.reduce((a, b) => (b[1] < a[1] ? b : a));
@@ -303,7 +319,7 @@ const fmt = (v: number) => (Math.abs(v - Math.round(v)) < 0.05 ? String(Math.rou
  * The opposite corner or side stays put, or the centre with `fromCenter`.
  */
 export function resizeCrop(c: Crop, sx: -1 | 0 | 1, sy: -1 | 0 | 1, p: [number, number], aspect: number | null,
-  div: number, fromCenter: boolean, frameW: number, frameH: number): Crop {
+  fromCenter: boolean, frameW: number, frameH: number): Crop {
   const a = c.r * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);
   const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
   const toWorld = (lx: number, ly: number): [number, number] => [cx + co * lx - si * ly, cy + si * lx + co * ly];
@@ -332,10 +348,10 @@ export function resizeCrop(c: Crop, sx: -1 | 0 | 1, sy: -1 | 0 | 1, p: [number, 
       w *= f; h *= f;
     }
   }
-  if (!aspect && div > 1) {
-    // Snap here rather than later so the fixed side does not shift; never past the clamp above.
-    if (sx) w = Math.max(div, Math.round(w / div) * div > w + 1e-6 && !c.r ? Math.floor(w / div) * div : Math.round(w / div) * div);
-    if (sy) h = Math.max(div, Math.round(h / div) * div > h + 1e-6 && !c.r ? Math.floor(h / div) * div : Math.round(h / div) * div);
+  if (!aspect && !c.r) {
+    // Whole pixels here rather than later so the fixed side does not shift; never past the clamp above.
+    if (sx) w = Math.max(2, Math.floor(w + 1e-6));
+    if (sy) h = Math.max(2, Math.floor(h + 1e-6));
   }
   const ncx = fromCenter ? 0 : fx + sx * w / 2, ncy = fromCenter ? 0 : fy + sy * h / 2;
   const [wx, wy] = toWorld(sx ? ncx : 0, sy ? ncy : 0);
