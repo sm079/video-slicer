@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, fitAspect, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
-  sanitizeProject, presetFrom, presetMatches, presetValues, sanitizePresets, PRESET_DEFAULTS, type Win, type Track,
+  sanitizeProject, combine, uncombine, cleanGroups, exportUnits, presetFrom, presetMatches, presetValues, sanitizePresets, PRESET_DEFAULTS, type Win, type Track,
 } from '../src/model/project.ts';
 import { Timebase, detectFps, parseFps } from '../src/media/timebase.ts';
 import { buildIndex } from '../src/media/demux.ts';
@@ -151,4 +151,31 @@ test('fitAspect trims a region to the output shape about its centre', () => {
   assert.deepEqual(fitAspect(crop(0, 0, 200, 100), 1), crop(50, 0, 100, 100), 'too wide: sides trimmed');
   assert.deepEqual(fitAspect(crop(0, 0, 100, 200), 2), crop(0, 75, 100, 50), 'too tall: top and bottom trimmed');
   assert.deepEqual(fitAspect(crop(0, 0, 200, 100, 30), 1), crop(50, 0, 100, 100, 30), 'rotation kept');
+});
+
+test('combining windows into groups that export as one clip each', () => {
+  const p = emptyProject();
+  const t = p.tracks[0].id;
+  const win = (id: string, start: number): Win => ({ id, track: t, start, len: 10, animate: false, keys: [{ f: 0, c: crop(0, 0, 16, 16) }] });
+  p.windows = [win('w1', 0), win('w2', 10), win('w3', 20), win('w4', 30), win('w5', 40)];
+  assert.equal(combine(p, ['w5']), null, 'one window is not a group');
+  combine(p, ['w5', 'w1']);
+  combine(p, ['w2', 'w4']);
+  const units = exportUnits(p, p.windows).map(u => u.wins.map(w => w.id));
+  assert.deepEqual(units, [['w5', 'w1'], ['w2', 'w4'], ['w3']], 'groups keep the order picked; three files');
+  assert.deepEqual(exportUnits(p, [p.windows[0]]).map(u => u.wins.length), [2], 'a member brings its whole group');
+
+  combine(p, ['w4', 'w3']);
+  assert.deepEqual(p.groups.map(g => g.wins), [['w5', 'w1'], ['w4', 'w3']], 'regrouping takes windows out of old groups; a lone leftover is dropped');
+
+  p.windows = p.windows.filter(w => w.id !== 'w1');
+  cleanGroups(p);
+  assert.deepEqual(p.groups.map(g => g.wins), [['w4', 'w3']], 'deleting a window dissolves a group left with one');
+
+  assert.ok(uncombine(p, ['w3']));
+  assert.equal(p.groups.length, 0);
+
+  const back = sanitizeProject({ ...p, groups: [{ id: 'g', wins: ['w2', 'w3', 'gone'] }, { id: 'h', wins: ['w3', 'w4'] }] });
+  assert.deepEqual(back.groups.map(g => g.wins), [['w2', 'w3']], 'loading drops missing and duplicate members');
+  assert.deepEqual(sanitizeProject({ tracks: [] }).groups, [], 'older projects have no groups');
 });

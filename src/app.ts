@@ -5,7 +5,7 @@ import { hashFile } from './media/hash';
 import { ThumbServer } from './media/thumbs';
 import { Timebase, detectFps } from './media/timebase';
 import {
-  Store, emptyProject, sanitizeProject, newTrack, uid, cropAt, snapLen, fits, freeSpan, fullCrop, refitCrop,
+  Store, emptyProject, sanitizeProject, groupOf, combine, uncombine, cleanGroups, newTrack, uid, cropAt, snapLen, fits, freeSpan, fullCrop, refitCrop,
   normalizeCrop, trackAspect, presetValues, sanitizePresets, type Crop, type Preset, type ProjectData, type Track, type Win,
 } from './model/project';
 import type { Orientation } from './model/render';
@@ -28,7 +28,7 @@ export interface Media {
 interface Play {
   /** The window being looped; while playing a sequence, the one currently playing. */
   loop: string | null;
-  /** Windows played one after another, in timeline order, wrapping at the end. */
+  /** A group's windows, played one after another in its order, wrapping at the end. */
   seq: string[] | null;
   nextDue: number;
   /** The loop range the audio was started with, to notice when the window is edited. */
@@ -67,8 +67,8 @@ export class App {
   media: Media | null = null;
   playhead = 0;
   selWin: string | null = null;
-  /** Further windows selected alongside selWin (Ctrl/Shift-click), for sequence playback and export. */
-  extraSel: string[] = [];
+  /** Every selected window in the order picked (Ctrl/Shift-click adds); selWin is one of them. */
+  picked: string[] = [];
   selTrack: string;
   play: Play | null = null;
   readonly audio = new AudioPlayer();
@@ -298,20 +298,21 @@ export class App {
 
   select(id: string | null) {
     this.selWin = id;
-    this.extraSel = [];
+    this.picked = id ? [id] : [];
     const w = this.win(id);
     if (w) this.selTrack = w.track;
     this.saveSoon();
     this.invalidate(true);
   }
 
-  /** Add a window to the selection (it becomes the one the inspector edits), or take it out. */
+  /** Add a window to the end of the selection (it becomes the one the inspector edits), or take it out. */
   toggleSelect(id: string) {
     if (!this.win(id)) return;
-    if (id === this.selWin) this.selWin = this.extraSel.pop() ?? null;
-    else if (this.extraSel.includes(id)) this.extraSel = this.extraSel.filter(o => o !== id);
-    else {
-      if (this.selWin) this.extraSel.push(this.selWin);
+    if (this.picked.includes(id)) {
+      this.picked = this.picked.filter(o => o !== id);
+      if (this.selWin === id) this.selWin = this.picked[this.picked.length - 1] ?? null;
+    } else {
+      this.picked.push(id);
       this.selWin = id;
     }
     const w = this.selected;
@@ -322,27 +323,40 @@ export class App {
 
   /** Make a selected window the one the inspector edits, keeping the rest of the selection. */
   focus(id: string) {
-    if (!this.extraSel.includes(id)) return;
-    this.extraSel = this.extraSel.filter(o => o !== id);
-    if (this.selWin) this.extraSel.push(this.selWin);
+    if (!this.picked.includes(id)) return;
     this.selWin = id;
     this.selTrack = this.win(id)!.track;
     this.invalidate(true);
   }
 
   isSelected(id: string) {
-    return id === this.selWin || this.extraSel.includes(id);
+    return this.picked.includes(id);
   }
 
-  /** Every selected window, in timeline order (by start, then track). */
+  /** Every selected window, in the order picked. */
   get selection(): Win[] {
-    return this.inTimelineOrder(this.data.windows.filter(w => this.isSelected(w.id)));
+    return this.picked.map(id => this.win(id)).filter((w): w is Win => !!w);
   }
 
-  /** A sorted copy: by start frame, then by track. The order combined windows play in. */
-  inTimelineOrder(wins: Win[]): Win[] {
-    const order = (w: Win) => this.data.tracks.findIndex(t => t.id === w.track);
-    return [...wins].sort((a, b) => a.start - b.start || order(a) - order(b));
+  group(win: string | null | undefined) {
+    return win ? groupOf(this.data, win) : undefined;
+  }
+
+  /** G: combine the selected windows into one clip that plays and exports in the order they were picked. */
+  combineSelection() {
+    const ids = this.selection.map(w => w.id);
+    if (ids.length < 2) { this.toast('Ctrl- or Shift-click two or more windows to combine them.'); return; }
+    if (!combine(this.data, ids)) return;
+    if (this.play?.loop && ids.includes(this.play.loop)) this.stop();
+    this.store.commit();
+  }
+
+  /** Shift+G: split the groups of the selected windows back into single windows. */
+  uncombineSelection() {
+    const ids = this.selection.map(w => w.id);
+    if (!uncombine(this.data, ids)) return;
+    if (this.play?.seq) this.stop();
+    this.store.commit();
   }
 
   selectTrack(id: string) {
@@ -353,8 +367,9 @@ export class App {
 
   private fixSelection() {
     if (this.selWin && !this.win(this.selWin)) this.selWin = null;
-    this.extraSel = this.extraSel.filter(id => id !== this.selWin && this.win(id));
-    if (!this.selWin && this.extraSel.length) this.selWin = this.extraSel.pop()!;
+    this.picked = this.picked.filter(id => this.win(id));
+    if (this.selWin && !this.picked.includes(this.selWin)) this.picked = [this.selWin];
+    if (!this.selWin) this.picked = [];
     if (!this.track(this.selTrack)) this.selTrack = this.data.tracks[0]?.id;
   }
 
@@ -439,18 +454,15 @@ export class App {
     this.invalidate(true);
   }
 
-  /**
-   * Loop a window. When it is part of a multi-selection, play every selected window one
-   * after another in timeline order instead, as a combined export would.
-   */
+  /** Loop a window; for a combined window, its whole group in order, as it exports. */
   playLoop(id: string) {
     const w = this.win(id);
     if (!w || !this.media) return;
     if (this.play?.loop === id || this.play?.seq?.includes(id)) { this.stop(); return; }
-    const sel = this.isSelected(id) ? this.selection : [];
-    const seq = sel.length > 1 ? sel.map(o => o.id) : null;
-    if (!seq) this.select(id);
-    const first = seq ? sel[0] : w;
+    const g = this.group(id);
+    const seq = g ? [...g.wins] : null;
+    if (!this.isSelected(id)) this.select(id);
+    const first = seq ? this.win(seq[0])! : w;
     this.playhead = first.start;
     this.play = { loop: first.id, seq, nextDue: performance.now(), audioLoop: '', audioSynced: 0 };
     this.startAudio();
@@ -620,7 +632,8 @@ export class App {
     const i = d.windows.findIndex(w => w.id === id);
     if (i < 0) return;
     d.windows.splice(i, 1);
-    if (this.play?.loop === id) this.stop();
+    cleanGroups(d);
+    if (this.play?.loop === id || this.play?.seq?.includes(id)) this.stop();
     this.store.commit();
   }
 
@@ -815,6 +828,8 @@ export class App {
     if (d.tracks.length <= 1) { this.toast('A project needs at least one track.'); return; }
     d.tracks = d.tracks.filter(t => t.id !== id);
     d.windows = d.windows.filter(w => w.track !== id);
+    cleanGroups(d);
+    if (this.play && !this.win(this.play.loop) && this.play.loop) this.stop();
     this.store.commit();
   }
 
@@ -870,6 +885,7 @@ export class App {
     if (m) m.tb = new Timebase(m.demux.index, data.fps, m.sourceFps);
     const total = this.total;
     data.windows = data.windows.filter(w => w.start < total);
+    cleanGroups(data);
     for (const w of data.windows) w.len = Math.min(w.len, total - w.start);
     this.selWin = null;
     this.store.replace(data);

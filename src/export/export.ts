@@ -2,21 +2,20 @@ import type { AudioCodec } from 'mediabunny';
 import type { App } from '../app';
 import { clipAudio, wav } from '../media/audio';
 import type { AudioInfo, Demux } from '../media/demux';
-import { cropAt, fitAspect, outputRegion, outputSize, type Track, type Win } from '../model/project';
+import { cropAt, exportUnits, fitAspect, outputRegion, outputSize, type Group, type Track, type Win } from '../model/project';
 import { renderOutput } from '../model/render';
 
 export type Format = 'mp4' | 'webm' | 'png';
 export type Quality = 'high' | 'very-high' | 'max';
 
 export interface ExportOptions {
+  /** Windows in scope; a combined window brings its whole group, which exports as one clip. */
   windows: Win[];
   format: Format;
   quality: Quality;
   manifest: boolean;
   /** Carry the source audio under each clip (ignored when the video has none). */
   audio: boolean;
-  /** Join the windows, in timeline order, into a single clip. */
-  combine: boolean;
 }
 
 export interface Writer {
@@ -106,11 +105,10 @@ export function clipName(app: App, w: Win, track: Track) {
   return `${base}_${safe(track.name)}_${String(n).padStart(3, '0')}_f${w.start}-${w.start + w.len - 1}`;
 }
 
-/** Name of a clip joining `wins` (in play order). */
-export function combinedName(app: App, wins: Win[]) {
+/** Name of the clip a group exports as, e.g. `video_group2_3x`. */
+export function groupName(app: App, g: Group) {
   const base = safe(app.media!.file.name.replace(/\.[^.]+$/, ''));
-  const last = wins[wins.length - 1];
-  return `${base}_combined_${wins.length}x_f${wins[0].start}-${last.start + last.len - 1}`;
+  return `${base}_group${app.data.groups.indexOf(g) + 1}_${g.wins.length}x`;
 }
 
 /**
@@ -222,13 +220,14 @@ async function encoder(format: Format, quality: Quality, w: number, h: number, f
   };
 }
 
-/** One output file: a window, or several windows played one after another. */
+/** One output file: a window, or a group's windows played one after another. */
 interface Job { name: string; segs: Win[] }
 
 function jobs(app: App, opts: ExportOptions): Job[] {
-  const wins = app.inTimelineOrder(opts.windows);
-  if (!opts.combine || wins.length < 2) return wins.map(w => ({ name: clipName(app, w, app.track(w.track)!), segs: [w] }));
-  return [{ name: combinedName(app, wins), segs: wins }];
+  return exportUnits(app.data, opts.windows).map(u => ({
+    name: u.group ? groupName(app, u.group) : clipName(app, u.wins[0], app.track(u.wins[0].track)!),
+    segs: u.wins,
+  }));
 }
 
 /** Render and write every clip. Preview and export share renderOutput and the bitmap copy. */

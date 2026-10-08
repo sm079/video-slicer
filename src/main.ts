@@ -6,7 +6,7 @@ import { Inspector, OutputPreview } from './ui/inspector';
 import { hydrateIcons, icon } from './ui/icons';
 import { initMenus, showToast, escapeHtml } from './ui/widgets';
 import { runExport, folderWriter, zipWriter, downloadWriter, type ExportOptions, type Format, type Quality } from './export/export';
-import { outputSize, type Win } from './model/project';
+import { exportUnits, outputSize, type Win } from './model/project';
 import { formatFps } from './media/timebase';
 import { initTheme, themePref, type ThemePref } from './ui/theme';
 
@@ -269,6 +269,7 @@ window.addEventListener('keydown', e => {
     case 'i': case 'I': handled(); app.setEdge('start'); break;
     case 'o': case 'O': handled(); app.setEdge('end'); break;
     case 'k': case 'K': handled(); app.toggleKey(); break;
+    case 'g': case 'G': handled(); if (e.shiftKey) app.uncombineSelection(); else app.combineSelection(); break;
     case '[': handled(); app.jumpKey(-1); break;
     case ']': handled(); app.jumpKey(1); break;
     case '+': case '=': handled(); timeline.zoomBy(1.6); break;
@@ -284,7 +285,6 @@ window.addEventListener('keydown', e => {
 const dlg = $<HTMLDialogElement>('export-dlg');
 const form = $<HTMLFormElement>('x-form');
 const xAudio = $<HTMLInputElement>('x-audio');
-const xCombine = $<HTMLInputElement>('x-combine');
 const radio = (name: string) => (form.elements.namedItem(name) as RadioNodeList);
 const xProgress = $('x-progress');
 let abort: AbortController | null = null;
@@ -300,19 +300,20 @@ function windowsFor(scope: string) {
   return app.data.windows;
 }
 
-/** Whether the export joins its windows into one clip. */
-const combining = (wins: Win[]) => xCombine.checked && wins.length > 1;
+/** Clip count, frame count and summary label for exporting `wins`; a combined group is one clip. */
+function exportPlan(wins: Win[]) {
+  const units = exportUnits(app.data, wins);
+  const frames = units.reduce((s, u) => s + u.wins.reduce((t, w) => t + w.len, 0), 0);
+  const combined = units.filter(u => u.group).length;
+  const label = `${units.length} clip${units.length === 1 ? '' : 's'}${combined ? ` (${combined} combined)` : ''}`;
+  return { units, frames, label };
+}
 
 function summarize() {
   const wins = windowsFor(radio('x-scope').value);
-  const frames = wins.reduce((s, w) => s + w.len, 0);
-  xCombine.disabled = wins.length < 2;
-  $('x-combine-wrap').dataset.tip = wins.length < 2 ? 'Needs two or more clips' : 'Join the clips into one, played in timeline order';
-  // A combined clip takes the size of its first window (in timeline order).
-  const first = app.inTimelineOrder(wins)[0];
-  const sized = combining(wins) ? [first] : wins;
-  const sizes = new Set(sized.map(w => { const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
-  const clips = combining(wins) ? `1 clip from ${wins.length} windows` : `${wins.length} clip${wins.length > 1 ? 's' : ''}`;
+  const { units, frames, label: clips } = exportPlan(wins);
+  // A combined clip takes the size of its first window.
+  const sizes = new Set(units.map(u => { const w = u.wins[0]; const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
   const perFrame = radio('x-dest').value === 'files' && radio('x-format').value === 'png' ? ' · one download per frame' : '';
   $('x-summary').textContent = wins.length
     ? `${clips} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}${perFrame}`
@@ -325,15 +326,13 @@ function openExport() {
   if (!app.media || dlg.open) return;
   if (!app.data.windows.length) { app.toast('Draw a window on the timeline first.'); return; }
   app.stop();
-  $('x-n-all').textContent = String(app.data.windows.length);
-  $('x-n-track').textContent = String(windowsFor('track').length);
-  $('x-n-sel').textContent = app.selection.length > 1 ? String(app.selection.length) : '';
+  $('x-n-all').textContent = String(exportPlan(app.data.windows).units.length);
+  $('x-n-track').textContent = String(exportPlan(windowsFor('track')).units.length);
+  $('x-n-sel').textContent = exportPlan(app.selection).units.length > 1 ? String(exportPlan(app.selection).units.length) : '';
   const sel = radio('x-scope');
   const selInput = form.querySelector<HTMLInputElement>('input[name=x-scope][value=sel]')!;
   selInput.disabled = !app.selected;
   sel.value = app.selected ? 'sel' : sel.value === 'sel' ? 'all' : sel.value;
-  // Several windows picked together are most likely meant to become one clip.
-  xCombine.checked = app.selection.length > 1;
   if (sel.value === 'track' && !windowsFor('track').length) sel.value = 'all';
   const audio = app.media.demux.audio;
   xAudio.disabled = !audio;
@@ -360,7 +359,6 @@ $('x-go').onclick = async () => {
   const opts: ExportOptions = {
     windows: wins, format: radio('x-format').value as Format, quality: radio('x-quality').value as Quality,
     manifest: $<HTMLInputElement>('x-manifest').checked, audio: xAudio.checked && !xAudio.disabled,
-    combine: combining(wins),
   };
   let writer;
   const base = app.media!.file.name.replace(/\.[^.]+$/, '');
@@ -389,7 +387,7 @@ $('x-go').onclick = async () => {
   summarize();
   // Export is disabled while running; keep focus (and Escape) inside the dialog.
   $('x-cancel').focus();
-  const total = wins.reduce((s, w) => s + w.len, 0);
+  const total = exportPlan(wins).frames;
   let done = 0, lastClip = -1, clipBase = 0;
   const t0 = performance.now();
   try {
@@ -407,8 +405,7 @@ $('x-go').onclick = async () => {
     }, abort.signal);
     bar.style.width = '100%';
     xProgress.classList.add('done');
-    const clips = opts.combine ? 1 : wins.length;
-    title.textContent = `Exported ${clips} clip${clips > 1 ? 's' : ''}${opts.combine ? ` from ${wins.length} windows` : ''}`;
+    title.textContent = `Exported ${exportPlan(wins).label}`;
     pct.textContent = '';
     detail.textContent = `${total.toLocaleString()} frames in ${formatDuration((performance.now() - t0) / 1000)}`;
     if (!dlg.open) app.toast(title.textContent, 'success');

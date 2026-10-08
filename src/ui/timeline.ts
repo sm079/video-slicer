@@ -431,11 +431,12 @@ export class Timeline {
       if (hit) {
         cursor = hit.part === 'body' ? 'grab' : hit.part === 'play' ? 'pointer' : 'ew-resize';
         const n = this.app.data.windows.filter(o => o.track === hit.w.track && o.start < hit.w.start).length + 1;
-        const group = this.app.isSelected(hit.w.id) && this.app.extraSel.length > 0;
+        const g = this.app.group(hit.w.id);
+        const gi = g ? `Group ${this.app.data.groups.indexOf(g) + 1} · part ${g.wins.indexOf(hit.w.id) + 1} of ${g.wins.length} · ` : '';
         const playing = this.app.play?.loop === hit.w.id || !!this.app.play?.seq?.includes(hit.w.id);
-        text = hit.part === 'play' ? (playing ? (group ? 'Stop' : 'Stop loop') : group ? 'Play selected windows in sequence' : 'Loop window')
+        text = hit.part === 'play' ? (playing ? 'Stop' : g ? `Play group ${this.app.data.groups.indexOf(g) + 1}` : 'Loop window')
           : hit.part === 'key' ? `Key at frame ${hit.key!.f} · drag to retime`
-          : `Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
+          : `${gi}Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
       } else if (this.app.data.tracks[this.laneAt(y)]) cursor = 'crosshair';
     } else if (y >= this.lanesBottom && x >= HEADER_W) cursor = 'pointer';
     else if (addRow || (x < HEADER_W && this.app.data.tracks[this.laneAt(y)])) cursor = 'pointer';
@@ -605,6 +606,9 @@ export class Timeline {
     const y = this.laneY(idx) + 2, h = LANE_H - 4;
     const sel = app.isSelected(w.id);
     const looping = app.play?.loop === w.id;
+    const g = app.group(w.id);
+    // The rest of the selected window's group gets a dashed outline.
+    const sibling = !sel && !!g && g.wins.includes(app.selWin ?? '');
     const width = Math.max(2, x1 - x0);
     ctx.globalAlpha = sel || looping ? 1 : 0.72;
     ctx.fillStyle = track.color;
@@ -620,6 +624,13 @@ export class Timeline {
       ctx.lineWidth = 2;
       roundRect(ctx, x0 - 1, y - 1, width + 2, h + 2, 6);
       ctx.stroke();
+    } else if (sibling) {
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      roundRect(ctx, x0 - 1, y - 1, width + 2, h + 2, 6);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.fillStyle = '#0b0d12';
     let tx = x0 + 6;
@@ -639,7 +650,9 @@ export class Timeline {
       const out = outputSize(w, track);
       ctx.fillStyle = 'rgba(8,9,12,.92)';
       ctx.font = `600 11px ${FONT}`;
-      const label = `${n}  ·  ${w.len} f${width > 150 ? `  ·  ${out.w}×${out.h}` : ''}`;
+      // Combined windows show their group and place in it, e.g. "G2·1".
+      const tag = g ? `G${app.data.groups.indexOf(g) + 1}·${g.wins.indexOf(w.id) + 1}  ·  ` : '';
+      const label = `${tag}${n}  ·  ${w.len} f${width > 150 ? `  ·  ${out.w}×${out.h}` : ''}`;
       ctx.fillText(ellipsize(ctx, label, x1 - tx - 6), tx, y + 16);
     }
     // Keyframes.

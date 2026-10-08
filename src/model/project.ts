@@ -19,6 +19,13 @@ export interface Win {
   animate: boolean;
 }
 
+/** Windows combined into one clip: they play and export one after another, in `wins` order. */
+export interface Group {
+  id: string;
+  /** Window ids in play order; always two or more, each in at most one group. */
+  wins: string[];
+}
+
 /** Allowed lengths are a·n + b for whole n (a = 1, b = 0 allows any length). */
 export interface Rule { a: number; b: number }
 
@@ -40,6 +47,7 @@ export interface ProjectData {
   fps: number | null;
   tracks: Track[];
   windows: Win[];
+  groups: Group[];
   defaultCrop: Crop | null;
 }
 
@@ -296,7 +304,7 @@ export function presetText(p: Preset, fpsText: (fps: number) => string = String)
 }
 
 export function emptyProject(): ProjectData {
-  return { version: 1, fps: null, tracks: [newTrack(0)], windows: [], defaultCrop: null };
+  return { version: 1, fps: null, tracks: [newTrack(0)], windows: [], groups: [], defaultCrop: null };
 }
 
 /** Accepts a parsed project file, filling defaults and dropping anything malformed. */
@@ -328,13 +336,76 @@ export function sanitizeProject(raw: unknown): ProjectData {
       animate: !!w.animate,
       keys: w.keys.map(k => ({ f: Math.max(0, Math.round(num(k.f, 0))), c: crop(k.c) })).sort((a, b) => a.f - b.f),
     }));
-  return {
+  const groups: Group[] = (Array.isArray(p.groups) ? p.groups : [])
+    .filter(g => g && Array.isArray(g.wins))
+    .map(g => ({ id: typeof g.id === 'string' ? g.id : uid('g'), wins: g.wins.filter((id): id is string => typeof id === 'string') }));
+  const data: ProjectData = {
     version: 1,
     fps: typeof p.fps === 'number' && p.fps > 0 ? p.fps : null,
     tracks,
     windows,
+    groups,
     defaultCrop: p.defaultCrop ? crop(p.defaultCrop) : null,
   };
+  cleanGroups(data);
+  return data;
+}
+
+/** Drop group members whose window is gone or already in an earlier group, then groups left with fewer than two. */
+export function cleanGroups(p: ProjectData) {
+  const live = new Set(p.windows.map(w => w.id));
+  const seen = new Set<string>();
+  for (const g of p.groups) {
+    g.wins = g.wins.filter(id => live.has(id) && !seen.has(id));
+    g.wins.forEach(id => seen.add(id));
+  }
+  p.groups = p.groups.filter(g => g.wins.length > 1);
+}
+
+export function groupOf(p: ProjectData, win: string): Group | undefined {
+  return p.groups.find(g => g.wins.includes(win));
+}
+
+/** Combine windows into one group, in the given order, taking them out of any group they were in. */
+export function combine(p: ProjectData, ids: string[]): Group | null {
+  const wins = [...new Set(ids)].filter(id => p.windows.some(w => w.id === id));
+  if (wins.length < 2) return null;
+  for (const g of p.groups) g.wins = g.wins.filter(id => !wins.includes(id));
+  const g: Group = { id: uid('g'), wins };
+  p.groups.push(g);
+  cleanGroups(p);
+  return g;
+}
+
+/** Split every group that holds one of the windows back into single windows. */
+export function uncombine(p: ProjectData, ids: string[]): boolean {
+  const before = p.groups.length;
+  p.groups = p.groups.filter(g => !g.wins.some(id => ids.includes(id)));
+  return p.groups.length !== before;
+}
+
+/**
+ * What exporting `wins` writes, one entry per output file: each group with a member among
+ * them (whole, in play order) and each ungrouped window alone, ordered by where they start.
+ */
+export function exportUnits(p: ProjectData, wins: Win[]): { group: Group | null; wins: Win[] }[] {
+  const byId = new Map(p.windows.map(w => [w.id, w]));
+  const units: { group: Group | null; wins: Win[] }[] = [];
+  const done = new Set<string>();
+  for (const w of wins) {
+    if (done.has(w.id)) continue;
+    const g = groupOf(p, w.id);
+    if (g) {
+      g.wins.forEach(id => done.add(id));
+      units.push({ group: g, wins: g.wins.map(id => byId.get(id)!) });
+    } else {
+      done.add(w.id);
+      units.push({ group: null, wins: [w] });
+    }
+  }
+  const track = (w: Win) => p.tracks.findIndex(t => t.id === w.track);
+  const first = (u: { wins: Win[] }) => u.wins.reduce((a, b) => (b.start < a.start || (b.start === a.start && track(b) < track(a)) ? b : a));
+  return units.sort((a, b) => first(a).start - first(b).start || track(first(a)) - track(first(b)));
 }
 
 /** Free frames [lo, hi) around `frame` on a track, ignoring one window. */
