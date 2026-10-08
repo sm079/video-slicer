@@ -127,6 +127,8 @@ $('t-end').onclick = () => { app.stop(); app.seek(app.total - 1); };
 $('t-back').onclick = () => app.step(-1);
 $('t-fwd').onclick = () => app.step(1);
 $('t-play').onclick = () => app.togglePlay();
+const loopBtn = $<HTMLButtonElement>('t-loop');
+loopBtn.onclick = () => { if (app.selWin) app.playLoop(app.selWin); else if (app.play?.loop) app.stop(); };
 $('t-new').onclick = () => app.createWindowAt(app.playhead);
 $('t-zin').onclick = () => timeline.zoomBy(1.6);
 $('t-zout').onclick = () => timeline.zoomBy(1 / 1.6);
@@ -138,7 +140,7 @@ const showVolume = () => {
   muteBtn.dataset.tip = muted ? 'Unmute' : 'Mute';
   muteBtn.setAttribute('aria-label', muteBtn.dataset.tip);
   volInput.value = String(app.audio.muted ? 0 : app.audio.volume);
-  volInput.style.accentColor = muted ? 'var(--text-3)' : '';
+  volInput.style.setProperty('--fill', `${Number(volInput.value) * 100}%`);
 };
 muteBtn.onclick = () => { app.audio.muted = !app.audio.muted; if (!app.audio.muted && app.audio.volume === 0) app.audio.volume = 1; showVolume(); };
 volInput.oninput = () => { app.audio.volume = Number(volInput.value); app.audio.muted = false; showVolume(); };
@@ -163,14 +165,15 @@ app.onDraw(() => {
     // Play ↔ loop keeps the pause icon; only a real swap gets the morph.
     const swapped = !!playState && (playState === 'pause') !== (state === 'pause');
     playState = state;
-    playBtn.innerHTML = icon(app.play ? 'pause' : 'play', 18);
+    playBtn.innerHTML = icon(app.play ? 'pause' : 'play', 16);
     if (swapped && !reducedMotion()) {
       playBtn.firstElementChild?.animate([{ transform: 'scale(.4) rotate(-45deg)', opacity: 0 }, { transform: 'none', opacity: 1 }],
         { duration: 240, easing: 'cubic-bezier(.34, 1.45, .64, 1)' });
     }
     playBtn.dataset.tip = app.play ? 'Pause' : 'Play';
     playBtn.setAttribute('aria-label', playBtn.dataset.tip);
-    playBtn.classList.toggle('looping', state === 'loop');
+    playBtn.classList.toggle('playing', state !== 'pause');
+    loopBtn.setAttribute('aria-pressed', String(state === 'loop'));
   }
 });
 app.onUi(() => {
@@ -184,6 +187,7 @@ app.onUi(() => {
     document.title = `${m.file.name} · Video Slicer`;
   }
   $('t-audio').hidden = !m?.demux.audio;
+  loopBtn.disabled = !app.selWin && app.play?.loop == null;
   $<HTMLButtonElement>('undo').disabled = !m || !app.store.canUndo;
   $<HTMLButtonElement>('redo').disabled = !m || !app.store.canRedo;
   $<HTMLButtonElement>('export').disabled = !m || !app.data.windows.length;
