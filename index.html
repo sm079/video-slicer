@@ -14,13 +14,13 @@
       document.documentElement.dataset.theme = t;
     } catch (e) { document.documentElement.dataset.theme = 'dark'; }
   </script>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='5' fill='%235b8cff'/%3E%3Cpath d='M12 6v20M20 6v20' stroke='%23fff' stroke-width='2.5'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Cdefs%3E%3CclipPath id=%22a%22%3E%3Cpath d=%22M0 0h20l-8 32H0z%22/%3E%3C/clipPath%3E%3CclipPath id=%22b%22%3E%3Cpath d=%22M20 0h12v32H12z%22/%3E%3C/clipPath%3E%3Cg id=%22t%22%3E%3Crect x=%223%22 y=%223%22 width=%2226%22 height=%2226%22 rx=%227%22 fill=%22%235b8cff%22/%3E%3Cpath d=%22M12.5 10.2v11.6c0 .8.9 1.3 1.6.9l9.2-5.8c.6-.4.6-1.4 0-1.8l-9.2-5.8c-.7-.4-1.6.1-1.6.9z%22 fill=%22%23fff%22/%3E%3C/g%3E%3C/defs%3E%3Cg transform=%22translate(-1.2 .8)%22 clip-path=%22url(%23a)%22%3E%3Cuse href=%22%23t%22/%3E%3C/g%3E%3Cg transform=%22translate(1.2 -.8)%22 clip-path=%22url(%23b)%22%3E%3Cuse href=%22%23t%22/%3E%3C/g%3E%3C/svg%3E">
 </head>
 <body>
   <div id="app" class="no-media">
     <header class="topbar">
       <div class="brand">
-        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="6" width="28" height="20" rx="5" fill="var(--accent)"/><path d="M12 6v20M20 6v20" stroke="#fff" stroke-width="2.5"/></svg>
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><defs><clipPath id="logo-a"><path d="M0 0h20l-8 32H0z"/></clipPath><clipPath id="logo-b"><path d="M20 0h12v32H12z"/></clipPath><g id="logo-t"><rect x="3" y="3" width="26" height="26" rx="7" fill="var(--accent)"/><path d="M12.5 10.2v11.6c0 .8.9 1.3 1.6.9l9.2-5.8c.6-.4.6-1.4 0-1.8l-9.2-5.8c-.7-.4-1.6.1-1.6.9z" fill="#fff"/></g></defs><g transform="translate(-1.2 .8)" clip-path="url(#logo-a)"><use href="#logo-t"/></g><g transform="translate(1.2 -.8)" clip-path="url(#logo-b)"><use href="#logo-t"/></g></svg>
         <span>Video Slicer</span>
       </div>
       <button id="fileinfo" class="file-chip" type="button" hidden data-tip="Source details" data-tip-pos="bottom"></button>
