@@ -1,5 +1,7 @@
 # Video Slicer
 
+**Live demo:** https://sm079.github.io/video-slicer/
+
 Cut a video into frame-exact clips in the browser. Pick an output frame rate, draw windows on any number of tracks, give each window a crop (rotated and keyframed if you like), and export every window as its own MP4, WebM or PNG sequence, with the audio under it. Nothing is uploaded: decoding, rendering and encoding all run locally in the tab.
 
 ## Run
