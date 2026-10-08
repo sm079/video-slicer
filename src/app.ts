@@ -75,7 +75,7 @@ export class App {
   private frameRequested = false;
   private uiDirty = false;
   private saveTimer = 0;
-  toast: (msg: string, kind?: 'error' | 'info') => void = () => {};
+  toast: (msg: string, kind?: 'error' | 'info' | 'success', action?: { label: string; run: () => void }) => void = () => {};
   onLoading: (msg: string | null) => void = () => {};
   view: ViewState | null = null;
   private presetCache: Preset[] | null = null;
@@ -126,7 +126,7 @@ export class App {
 
   private writePresets(list: Preset[]) {
     this.presetCache = list;
-    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); } catch { this.toast('Could not save presets: browser storage is unavailable.', 'error'); }
+    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); } catch { this.toast('Couldn’t save presets: browser storage is unavailable.', 'error'); }
     this.invalidate(true);
   }
 
@@ -210,7 +210,10 @@ export class App {
     this.view?.reset();
     if (saved?.view) this.view?.set(saved.view);
     this.onLoading(null);
-    if (saved && !quiet) this.toast('Restored where you left off with this video. Reset starts over.');
+    if (saved && !quiet) this.toast('Picked up where you left off', 'info', { label: 'Start over', run: () => {
+      this.resetEditor();
+      this.toast('Started over', 'info', { label: 'Undo', run: () => this.store.undo() });
+    } });
     this.updateWants();
     this.invalidate(true);
   }
@@ -719,6 +722,7 @@ export class App {
     const t = newTrack(this.data.tracks.length, this.currentTrack);
     this.data.tracks.push(t);
     this.selTrack = t.id;
+    this.selWin = null;
     this.store.commit();
   }
 
