@@ -70,11 +70,6 @@
     </aside>
 
     <div class="transport">
-      <label class="readout" data-tip="Current frame · type to jump">
-        <input id="t-frame" class="tc-frame" type="number" min="0" step="1" aria-label="Current frame">
-        <span id="t-total" class="tc-total"></span>
-        <span id="t-time" class="tc-time"></span>
-      </label>
       <div class="deck well" role="group" aria-label="Playback">
         <button id="t-start" class="btn icon ghost" aria-label="First frame" data-tip="First frame" data-kbd="Home"><i data-icon="first" data-size="15"></i></button>
         <button id="t-back" class="btn icon ghost" aria-label="Previous frame" data-tip="Previous frame" data-kbd="←"><i data-icon="prev" data-size="17"></i></button>
@@ -84,6 +79,11 @@
         <span class="well-sep"></span>
         <button id="t-loop" class="btn icon ghost" aria-label="Loop window" aria-pressed="false" data-tip="Loop selected window" data-kbd="L" disabled><i data-icon="loop" data-size="15"></i></button>
       </div>
+      <label class="readout" data-tip="Current frame · type to jump">
+        <input id="t-frame" class="tc-frame" type="number" min="0" step="1" aria-label="Current frame">
+        <span id="t-total" class="tc-total"></span>
+        <span id="t-time" class="tc-time"></span>
+      </label>
       <div class="transport-tools">
         <div id="t-audio" class="volume" hidden>
           <button id="t-mute" class="btn icon ghost" aria-label="Mute" data-tip="Mute" data-kbd="M"></button>
