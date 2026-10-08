@@ -22,6 +22,8 @@ export interface ExportOptions {
 export interface Writer {
   write(path: string, data: Blob | Uint8Array): Promise<void>;
   finish(): Promise<void>;
+  /** Writes flat files only: PNG sequences are named `clip_00000.png` instead of `clip/00000.png`. */
+  flat?: boolean;
 }
 
 export interface Progress {
@@ -72,6 +74,27 @@ export async function zipWriter(name: string): Promise<Writer> {
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     },
+  };
+}
+
+/**
+ * Downloads every file on its own, nothing zipped. Browsers drop downloads started too close
+ * together, so they are spaced out; most ask once before allowing a page several downloads.
+ */
+export function downloadWriter(): Writer {
+  return {
+    flat: true,
+    async write(path, data) {
+      const blob = data instanceof Blob ? data : new Blob([data as BlobPart]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = path;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await new Promise(r => setTimeout(r, 250));
+    },
+    async finish() {},
   };
 }
 
@@ -216,6 +239,7 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
   const manifest: unknown[] = [];
   const stream = opts.audio ? demux.audio : null;
   const plan = stream && opts.format !== 'png' ? { ...await audioPlan(opts.format, opts.quality, stream.info), inputRate: stream.info.sampleRate } : null;
+  const seqPath = (name: string, file: string) => (writer.flat ? `${name}_${file}` : `${name}/${file}`);
   for (let c = 0; c < list.length; c++) {
     const { name, segs } = list[c];
     // A combined clip takes the first window's size; the others are trimmed to its shape and scaled.
@@ -272,7 +296,7 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
             renderOutput(ctx, bmp, m.orient, region, out.w, out.h);
             bmp.close();
             if (enc) await enc.add(done);
-            else await writer.write(`${name}/${String(done).padStart(5, '0')}.png`, await canvas.convertToBlob({ type: 'image/png' }));
+            else await writer.write(seqPath(name, `${String(done).padStart(5, '0')}.png`), await canvas.convertToBlob({ type: 'image/png' }));
             done++;
             await feedAudio((i + 1) / tb.fps);
             progress({ clip: c, clips: list.length, frame: done, frames, name });
@@ -297,14 +321,14 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
         });
       }
       if (enc) await writer.write(`${name}.${opts.format}`, await enc.finish());
-      else if (stream) await writer.write(`${name}/audio.wav`, wav(wavChunks, stream.info.sampleRate, stream.info.channels));
+      else if (stream) await writer.write(seqPath(name, 'audio.wav'), wav(wavChunks, stream.info.sampleRate, stream.info.channels));
     } catch (e) {
       enc?.cancel();
       throw e;
     }
-    const file = opts.format !== 'png' ? `${name}.${opts.format}` : `${name}/`;
+    const file = opts.format !== 'png' ? `${name}.${opts.format}` : writer.flat ? `${name}_#####.png` : `${name}/`;
     const audioInfo = !stream ? null : plan ? { codec: plan.codec, sampleRate: plan.sampleRate, channels: plan.channels }
-      : { file: `${name}/audio.wav`, sampleRate: stream.info.sampleRate, channels: stream.info.channels };
+      : { file: seqPath(name, 'audio.wav'), sampleRate: stream.info.sampleRate, channels: stream.info.channels };
     // A single window keeps its fields at the top level; a combined clip lists its parts in play order.
     manifest.push(parts.length === 1
       ? { file, ...parts[0], width: out.w, height: out.h, audio: audioInfo }

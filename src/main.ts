@@ -5,7 +5,7 @@ import { Timeline, timecode } from './ui/timeline';
 import { Inspector, OutputPreview } from './ui/inspector';
 import { hydrateIcons, icon } from './ui/icons';
 import { initMenus, showToast, escapeHtml } from './ui/widgets';
-import { runExport, folderWriter, zipWriter, type ExportOptions, type Format, type Quality } from './export/export';
+import { runExport, folderWriter, zipWriter, downloadWriter, type ExportOptions, type Format, type Quality } from './export/export';
 import { outputSize, type Win } from './model/project';
 import { formatFps } from './media/timebase';
 import { initTheme, themePref, type ThemePref } from './ui/theme';
@@ -313,8 +313,9 @@ function summarize() {
   const sized = combining(wins) ? [first] : wins;
   const sizes = new Set(sized.map(w => { const o = outputSize(w, app.track(w.track)!); return `${o.w}×${o.h}`; }));
   const clips = combining(wins) ? `1 clip from ${wins.length} windows` : `${wins.length} clip${wins.length > 1 ? 's' : ''}`;
+  const perFrame = radio('x-dest').value === 'files' && radio('x-format').value === 'png' ? ' · one download per frame' : '';
   $('x-summary').textContent = wins.length
-    ? `${clips} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}`
+    ? `${clips} · ${frames.toLocaleString()} frames · ${sizes.size > 2 ? `${sizes.size} sizes` : [...sizes].join(', ')}${perFrame}`
     : 'Nothing to export';
   $('x-quality-row').hidden = radio('x-format').value === 'png';
   $<HTMLButtonElement>('x-go').disabled = !wins.length || !!abort;
@@ -364,7 +365,9 @@ $('x-go').onclick = async () => {
   let writer;
   const base = app.media!.file.name.replace(/\.[^.]+$/, '');
   try {
-    if (radio('x-dest').value === 'folder') {
+    const dest = radio('x-dest').value;
+    if (dest === 'files') writer = downloadWriter();
+    else if (dest === 'folder') {
       const dir = await (window as unknown as { showDirectoryPicker(o: object): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({ mode: 'readwrite', id: 'video-slicer-export' });
       writer = await folderWriter(dir);
     } else writer = await zipWriter(`${base}_slices.zip`);

@@ -11,7 +11,7 @@ npm run build    # static site in dist/
 npm test         # unit tests (Node 23.6+)
 ```
 
-Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder needs the File System Access API, which only Chromium has; other browsers get a ZIP download.
+Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder needs the File System Access API, which only Chromium has; any browser can export a ZIP or download the files one by one.
 
 ## Workflow
 
@@ -21,7 +21,7 @@ Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder need
 4. **Length rule** (Track tab). Each track can require lengths of the form *a·n + b* (presets for 4n+1, 8n+1 and so on; *a* = 1 allows any length). Creating, resizing and typing lengths all snap to it.
 5. **Loop.** Click ▶ on a window, or press <kbd>L</kbd>, to loop it. Short windows stay fully cached and loop without re-decoding. <kbd>Ctrl</kbd>- or <kbd>Shift</kbd>-click windows to select several; looping one of them plays the whole selection back to back in timeline order, the way it exports when combined.
 6. **Crop.** Drag the box to move it, the handles to resize, and the round handle to rotate. Drag outside the box to draw a new one. A track's output size can be derived from the crop (sides snapped to a multiple of ÷), or fixed with W × H, which locks the crop's shape. Number fields can be dragged by their labels to scrub the value. Turn on **Keyframes** to animate the crop: every edit then keys it at the playhead, and keys interpolate linearly.
-7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys. **Combine** joins the clips into one, played in timeline order: it takes the first window's output size, and the others are trimmed to its shape and scaled; the manifest lists its parts under `segments`.
+7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys. Save to a folder, a ZIP, or as separate downloads (PNG frames then come out flat, as `clip_00000.png`). **Combine** joins the clips into one, played in timeline order: it takes the first window's output size, and the others are trimmed to its shape and scaled; the manifest lists its parts under `segments`.
 8. **Audio** plays along with playback and loops (<kbd>M</kbd> mutes; the volume sits in the transport bar). Exports carry the source audio from each clip's first frame for exactly the clip's duration: AAC in MP4 (Opus if the browser has no AAC encoder), Opus in WebM, and `audio.wav` beside PNG frames. Audio is resampled to 48 kHz only when the encoder can't take the source rate, and mixed down to stereo.
 
 Hover any control for its name and shortcut, or press <kbd>?</kbd> for the full list. The menu switches between light, dark and the system theme.
