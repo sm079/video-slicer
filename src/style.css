@@ -251,7 +251,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: no
   display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px;
   background: var(--bg-0); border: 1px solid var(--border-2); max-width: 100%;
 }
-.seg label { position: relative; flex: 1; min-width: 0; }
+.seg label { position: relative; flex: 1 0 auto; }
 .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .seg span {
   display: flex; align-items: center; justify-content: center; gap: 6px; height: 24px; padding: 0 12px;
@@ -501,7 +501,7 @@ body.dragging .drop-overlay { display: grid; }
 .dlg-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 6px 20px; }
 .dlg-head h2 { margin: 0; font-size: 15px; font-weight: 650; }
 .dlg-body { padding: 10px 20px 18px; display: grid; gap: 14px; }
-.dlg-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px 12px 20px; border-top: 1px solid var(--border-2); background: var(--bg-1); border-radius: 0 0 14px 14px; }
+.dlg-foot { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-2); background: var(--bg-1); border-radius: 0 0 14px 14px; }
 .opt { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; }
 .opt-label { color: var(--text-2); }
 .opt .seg { justify-self: start; }
@@ -577,5 +577,7 @@ body.dragging .drop-overlay { display: grid; }
   .side { border-top: 1px solid var(--border); }
   .inspector { overflow: visible; }
   .shortcuts { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
   .opt { grid-template-columns: 1fr; gap: 6px; }
 }
