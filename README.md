@@ -16,22 +16,22 @@ Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder need
 ## Workflow
 
 1. **Open** or drop a video. MP4, MOV, MKV, WebM and MPEG-TS are read natively; AVI, FLV, WMV and other containers go through an ffmpeg (libavformat) demuxer compiled to WebAssembly. The codec must be one the browser can decode (H.264, HEVC where supported, VP8/9, AV1).
-2. **Output fps.** Blank means native: output frame *i* is source frame *i*, even for variable frame rate. A value conforms the video: output frame *i* covers [*i*/fps, (*i*+1)/fps) and shows the source frame on screen at the middle of that interval. These are the same frames `ffmpeg -vf fps=N` picks. Every frame number on the timeline is an output frame.
+2. **Output fps** (Project tab). Blank means native: output frame *i* is source frame *i*, even for variable frame rate. A value conforms the video: output frame *i* covers [*i*/fps, (*i*+1)/fps) and shows the source frame on screen at the middle of that interval. These are the same frames `ffmpeg -vf fps=N` picks. Every frame number on the timeline is an output frame.
 3. **Windows.** Drag on an empty track to draw one; double-click or press <kbd>N</kbd> for a default-length window at that spot. Drag a window to slide it, or drag up or down to move it to another track. Drag its edges to resize. Windows on one track never overlap; a new window that doesn't fit goes to the next free track, or to a new one.
-4. **Length rule.** Each track can require lengths of the form *a·n + b* (presets for 4n+1, 8n+1 and so on; *a* = 1 allows any length). Creating, resizing and typing lengths all snap to it.
+4. **Length rule** (Track tab). Each track can require lengths of the form *a·n + b* (presets for 4n+1, 8n+1 and so on; *a* = 1 allows any length). Creating, resizing and typing lengths all snap to it.
 5. **Loop.** Click ▶ on a window, or press <kbd>L</kbd>, to loop it. Short windows stay fully cached and loop without re-decoding.
-6. **Crop.** Drag the box to move it, the handles to resize, and the round handle to rotate. Drag outside the box to draw a new one. A track's output size can be derived from the crop (sides snapped to a multiple of ÷), or fixed with W × H, which locks the crop's shape. Turn on **Animate** to keyframe the crop: every edit then keys it at the playhead, and keys interpolate linearly.
+6. **Crop.** Drag the box to move it, the handles to resize, and the round handle to rotate. Drag outside the box to draw a new one. A track's output size can be derived from the crop (sides snapped to a multiple of ÷), or fixed with W × H, which locks the crop's shape. Number fields can be dragged by their labels to scrub the value. Turn on **Keyframes** to animate the crop: every edit then keys it at the playhead, and keys interpolate linearly.
 7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys.
 8. **Audio** plays along with playback and loops (<kbd>M</kbd> mutes; the volume sits in the transport bar). Exports carry the source audio from each clip's first frame for exactly the clip's duration: AAC in MP4 (Opus if the browser has no AAC encoder), Opus in WebM, and `audio.wav` beside PNG frames. Audio is resampled to 48 kHz only when the encoder can't take the source rate, and mixed down to stereo.
 
-Press <kbd>?</kbd> in the app for all shortcuts.
+Hover any control for its name and shortcut, or press <kbd>?</kbd> for the full list.
 
-The editor state (windows, tracks, fps, playhead, selection and timeline zoom) autosaves in the browser under a fingerprint of the video's content, so opening the same video again, even renamed or copied elsewhere, picks up where you left off. **Reset** starts the video over (undoable), and **Save project** writes the project to JSON. The fingerprint is a SHA-256 of the whole file up to 64 MB; for larger files it covers the size and 32 evenly spaced 1 MiB samples, so opening stays fast.
+The editor state (windows, tracks, fps, playhead, selection and timeline zoom) autosaves in the browser under a fingerprint of the video's content, so opening the same video again, even renamed or copied elsewhere, picks up where you left off. **Start over** in the menu clears the video's project (undoable), and **Save project** writes it to JSON. The fingerprint is a SHA-256 of the whole file up to 64 MB; for larger files it covers the size and 32 evenly spaced 1 MiB samples, so opening stays fast.
 
 ## How it stays frame-exact
 
 - **Index.** On open, every packet's timestamp is read without decoding. For MP4/MOV this comes from the sample table, so a two-hour file opens in under a second. Frames are addressed by index, never by approximate time.
-- **Decoding.** WebCodecs decodes in hardware. One decode session runs from the needed keyframe; anything wanted ahead of it in the same or next GOP comes from that session, so stepping, playback and looping never re-decode. Frames are cached as full-resolution bitmaps within a configurable budget (Frame cache, default 1 GB).
+- **Decoding.** WebCodecs decodes in hardware. One decode session runs from the needed keyframe; anything wanted ahead of it in the same or next GOP comes from that session, so stepping, playback and looping never re-decode. Frames are cached as full-resolution bitmaps within a configurable budget (Project tab → Frame cache, default 1 GB).
 - **One render path.** The Output panel and the exporter call the same render function on frames copied the same way, so the preview is the encoded frame.
 - **Color.** Untagged video is decoded with the BT.601 matrix, as ffmpeg, PyAV and OpenCV do. This can be switched to BT.709. Exports are tagged BT.709.
 
