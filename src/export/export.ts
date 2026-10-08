@@ -2,7 +2,7 @@ import type { AudioCodec } from 'mediabunny';
 import type { App } from '../app';
 import { clipAudio, wav } from '../media/audio';
 import type { AudioInfo, Demux } from '../media/demux';
-import { cropAt, outputSize, type Track, type Win } from '../model/project';
+import { cropAt, outputRegion, outputSize, type Track, type Win } from '../model/project';
 import { renderOutput } from '../model/render';
 
 export type Format = 'mp4' | 'webm' | 'png';
@@ -244,7 +244,7 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
         const frame = await frameFor(srcs[i]);
         if (!frame) throw new Error(`Could not decode source frame ${srcs[i]} for ${name}.`);
         const bmp = await createImageBitmap(frame);
-        renderOutput(ctx, bmp, m.orient, cropAt(w, i), out.w, out.h);
+        renderOutput(ctx, bmp, m.orient, outputRegion(cropAt(w, i), cropAt(w, 0), track), out.w, out.h);
         bmp.close();
         if (enc) await enc.add(i);
         else await writer.write(`${name}/${String(i).padStart(5, '0')}.png`, await canvas.convertToBlob({ type: 'image/png' }));
@@ -275,6 +275,8 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
       height: out.h,
       audio: stream ? (plan ? { codec: plan.codec, sampleRate: plan.sampleRate, channels: plan.channels } : { file: `${name}/audio.wav`, sampleRate: stream.info.sampleRate, channels: stream.info.channels }) : null,
       keys: w.keys,
+      // The source area each key puts in the output: the crop trimmed to the output's shape.
+      regions: w.keys.map(k => ({ f: k.f, c: outputRegion(k.c, cropAt(w, 0), track) })),
     });
   }
   if (opts.manifest) {

@@ -106,15 +106,40 @@ export function cropAt(win: Win, f: number): Crop {
 export const snapDown = (v: number, d: number) => Math.max(d, Math.floor(v / d + 1e-6) * d);
 export const snapNear = (v: number, d: number) => Math.max(d, Math.round(v / d) * d);
 
-/** Output frame size of a window: fixed by the track, or the crop at the window start snapped to div. */
-export function outputSize(win: Win, track: Track): { w: number; h: number } {
+/** Output frame size for a window whose first crop is c0: fixed by the track, or the crop snapped down to div. */
+export function outputSizeFor(c0: Crop, track: Track): { w: number; h: number } {
   const div = Math.max(1, track.div | 0);
   if (track.outW > 0 && track.outH > 0) return { w: track.outW, h: track.outH };
-  const c = cropAt(win, 0);
-  const cw = snapDown(c.w, div), ch = snapDown(c.h, div);
+  const cw = snapDown(c0.w, div), ch = snapDown(c0.h, div);
   if (track.outW > 0) return { w: track.outW, h: snapNear(track.outW * ch / cw, div) };
   if (track.outH > 0) return { w: snapNear(track.outH * cw / ch, div), h: track.outH };
   return { w: cw, h: ch };
+}
+
+/** Output frame size of a window: fixed by the track, or the crop at the window start snapped to div. */
+export function outputSize(win: Win, track: Track): { w: number; h: number } {
+  return outputSizeFor(cropAt(win, 0), track);
+}
+
+/**
+ * The part of crop c that ends up in the output, scaled uniformly: the centred rect of the
+ * output's shape. With a size taken from the crop it is the crop trimmed to the side
+ * multiples, on whole pixels, so an unrotated crop at the window start copies 1:1.
+ */
+export function outputRegion(c: Crop, c0: Crop, track: Track): Crop {
+  const out = outputSizeFor(c0, track);
+  let w: number, h: number;
+  if (track.outW > 0 || track.outH > 0) {
+    const k = Math.min(c.w / out.w, c.h / out.h);
+    w = out.w * k; h = out.h * k;
+  } else {
+    // Keys of an animated window share one shape; later keys scale the trimmed size with them.
+    const k = Math.min(c.w / c0.w, c.h / c0.h);
+    w = Math.min(c.w, out.w * k); h = Math.min(c.h, out.h * k);
+  }
+  let dx = (c.w - w) / 2, dy = (c.h - h) / 2;
+  if (!c.r) { dx = Math.floor(dx + 1e-6); dy = Math.floor(dy + 1e-6); }
+  return { x: c.x + dx, y: c.y + dy, w, h, r: c.r };
 }
 
 /** The aspect ratio a track forces on crops, or null when free. */
@@ -123,10 +148,10 @@ export function trackAspect(track: Track): number | null {
 }
 
 /**
- * Makes a crop valid: aspect ratio, side multiples (when the crop itself sets the
- * output size) and, when unrotated, inside the frame on whole pixels.
+ * Makes a crop valid: aspect ratio and, when unrotated, inside the frame on whole pixels.
+ * Crops are free-sized; the output trims them to the track's side multiples (outputRegion).
  */
-export function normalizeCrop(c: Crop, frameW: number, frameH: number, aspect: number | null, div: number): Crop {
+export function normalizeCrop(c: Crop, frameW: number, frameH: number, aspect: number | null): Crop {
   let { x, y, w, h, r } = c;
   r = ((r + 180) % 360 + 360) % 360 - 180;
   if (Math.abs(r) < 1e-6) r = 0;
@@ -138,9 +163,6 @@ export function normalizeCrop(c: Crop, frameW: number, frameH: number, aspect: n
     if (w / h > aspect) w = h * aspect; else h = w / aspect;
     if (w > maxW) { w = maxW; h = w / aspect; }
     if (h > maxH) { h = maxH; w = h * aspect; }
-  } else if (div > 1) {
-    w = Math.min(snapNear(w, div), snapDown(maxW, div));
-    h = Math.min(snapNear(h, div), snapDown(maxH, div));
   }
   x = cx - w / 2;
   y = cy - h / 2;
@@ -153,21 +175,21 @@ export function normalizeCrop(c: Crop, frameW: number, frameH: number, aspect: n
 }
 
 /** The largest crop of the track's shape, centred in the frame. */
-export function fullCrop(frameW: number, frameH: number, aspect: number | null, div: number): Crop {
+export function fullCrop(frameW: number, frameH: number, aspect: number | null): Crop {
   let w = frameW, h = frameH;
   if (aspect) { if (w / h > aspect) w = h * aspect; else h = w / aspect; }
-  return normalizeCrop({ x: (frameW - w) / 2, y: (frameH - h) / 2, w, h, r: 0 }, frameW, frameH, aspect, div);
+  return normalizeCrop({ x: (frameW - w) / 2, y: (frameH - h) / 2, w, h, r: 0 }, frameW, frameH, aspect);
 }
 
 /** Refit a crop to a new shape, keeping its centre and size as far as possible. */
-export function refitCrop(c: Crop, frameW: number, frameH: number, aspect: number | null, div: number): Crop {
+export function refitCrop(c: Crop, frameW: number, frameH: number, aspect: number | null): Crop {
   let { w, h } = c;
   if (aspect) {
     const area = w * h;
     w = Math.sqrt(area * aspect);
     h = w / aspect;
   }
-  return normalizeCrop({ ...c, x: c.x + (c.w - w) / 2, y: c.y + (c.h - h) / 2, w, h }, frameW, frameH, aspect, div);
+  return normalizeCrop({ ...c, x: c.x + (c.w - w) / 2, y: c.y + (c.h - h) / 2, w, h }, frameW, frameH, aspect);
 }
 
 export function newTrack(index: number, from?: Track): Track {
@@ -176,11 +198,90 @@ export function newTrack(index: number, from?: Track): Track {
     name: `Track ${index + 1}`,
     color: COLORS[index % COLORS.length],
     rule: from ? { ...from.rule } : { a: 1, b: 0 },
-    defLen: from?.defLen ?? 81,
+    defLen: from?.defLen ?? PRESET_DEFAULTS.defLen,
     outW: from?.outW ?? 0,
     outH: from?.outH ?? 0,
-    div: from?.div ?? 2,
+    div: from?.div ?? PRESET_DEFAULTS.div,
   };
+}
+
+/**
+ * Saved output settings. Every field is optional: applying a preset sets the ones it has
+ * and returns the rest to their defaults (native fps, size from the crop, any length).
+ */
+export interface Preset {
+  name: string;
+  fps?: number;
+  outW?: number;
+  outH?: number;
+  rule?: Rule;
+  defLen?: number;
+  div?: number;
+}
+
+export type PresetValues = Required<Omit<Preset, 'name' | 'fps'>> & { fps: number | null };
+
+export const PRESET_DEFAULTS: PresetValues = { fps: null, outW: 0, outH: 0, rule: { a: 1, b: 0 }, defLen: 81, div: 2 };
+
+/** The settings a preset stands for, defaults filled in. */
+export function presetValues(p: Preset): PresetValues {
+  return {
+    fps: p.fps ?? null,
+    outW: p.outW ?? 0,
+    outH: p.outH ?? 0,
+    rule: p.rule ? { ...p.rule } : { ...PRESET_DEFAULTS.rule },
+    defLen: p.defLen ?? PRESET_DEFAULTS.defLen,
+    div: p.div ?? PRESET_DEFAULTS.div,
+  };
+}
+
+const sameRule = (a: Rule, b: Rule) => a.a === b.a && (a.a <= 1 || a.b === b.b);
+
+/** A preset of the current settings, leaving out the ones at their defaults. */
+export function presetFrom(name: string, fps: number | null, t: Track): Preset {
+  const p: Preset = { name };
+  if (fps != null) p.fps = fps;
+  if (t.outW) p.outW = t.outW;
+  if (t.outH) p.outH = t.outH;
+  if (!sameRule(t.rule, PRESET_DEFAULTS.rule)) p.rule = { ...t.rule };
+  if (t.defLen !== PRESET_DEFAULTS.defLen) p.defLen = t.defLen;
+  if (t.div !== PRESET_DEFAULTS.div) p.div = t.div;
+  return p;
+}
+
+export function presetMatches(p: Preset, fps: number | null, t: Track): boolean {
+  const v = presetValues(p);
+  const fpsSame = v.fps == null ? fps == null : fps != null && Math.abs(v.fps - fps) < 1e-6;
+  return fpsSame && v.outW === t.outW && v.outH === t.outH && sameRule(v.rule, t.rule) && v.defLen === t.defLen && v.div === t.div;
+}
+
+/** Accepts a parsed preset list, dropping malformed entries and fields. */
+export function sanitizePresets(raw: unknown): Preset[] {
+  if (!Array.isArray(raw)) return [];
+  const int = (v: unknown, min: number) => (typeof v === 'number' && Number.isFinite(v) && v >= min ? Math.round(v) : undefined);
+  const out: Preset[] = [];
+  for (const r of raw as Partial<Preset>[]) {
+    if (!r || typeof r !== 'object' || typeof r.name !== 'string' || !r.name.trim()) continue;
+    const p: Preset = { name: r.name.trim() };
+    if (typeof r.fps === 'number' && r.fps > 0 && Number.isFinite(r.fps)) p.fps = r.fps;
+    const outW = int(r.outW, 1), outH = int(r.outH, 1), defLen = int(r.defLen, 1), div = int(r.div, 1);
+    if (outW) p.outW = outW;
+    if (outH) p.outH = outH;
+    if (defLen) p.defLen = defLen;
+    if (div) p.div = div;
+    const a = int(r.rule?.a, 1);
+    if (a) p.rule = { a, b: Math.round(Number(r.rule?.b) || 0) };
+    out.push(p);
+  }
+  return out;
+}
+
+/** One-line summary, e.g. "24 fps · 832×480 · 4n+1 · len 81 · ÷16". */
+export function presetText(p: Preset, fpsText: (fps: number) => string = String): string {
+  const v = presetValues(p);
+  const size = v.outW && v.outH ? `${v.outW}×${v.outH}` : v.outW ? `w ${v.outW}` : v.outH ? `h ${v.outH}` : 'crop size';
+  return [v.fps == null ? 'native fps' : `${fpsText(v.fps)} fps`, size, ruleText(v.rule) === 'any' ? 'any length' : ruleText(v.rule),
+    `len ${v.defLen}`, `÷${v.div}`].join(' · ');
 }
 
 export function emptyProject(): ProjectData {

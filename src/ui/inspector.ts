@@ -1,5 +1,8 @@
 import type { App } from '../app';
-import { cropAt, outputSize, snapLen, minLen, ruleText, RULE_PRESETS, COLORS, fullCrop, trackAspect, type Crop } from '../model/project';
+import {
+  cropAt, outputRegion, outputSize, outputSizeFor, snapLen, minLen, ruleText, RULE_PRESETS, COLORS, fullCrop,
+  presetFrom, presetMatches, presetText, type Crop,
+} from '../model/project';
 import { formatFps, parseFps } from '../media/timebase';
 import { renderOutput } from '../model/render';
 
@@ -8,6 +11,8 @@ const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 /** Side panel: video info, frame rate, the selected window and its track. Rebuilt only when its shape changes. */
 export class Inspector {
   private shape = '';
+  /** The preset name field is open. */
+  private saving = false;
 
   constructor(private root: HTMLElement, private app: App) {
     app.onUi(() => this.update());
@@ -15,6 +20,11 @@ export class Inspector {
     root.addEventListener('click', e => this.onClick(e));
     root.addEventListener('keydown', e => {
       const t = e.target as HTMLInputElement;
+      if (t.id === 'p-name' && (e.key === 'Enter' || e.key === 'Escape')) {
+        e.preventDefault();
+        if (e.key === 'Enter') this.savePreset(); else this.closeSave();
+        return;
+      }
       if (e.key === 'Enter' && t.tagName === 'INPUT') { t.blur(); }
       if (e.key === 'Escape' && t.tagName === 'INPUT') { this.shape = ''; t.blur(); this.update(); }
     });
@@ -23,7 +33,7 @@ export class Inspector {
   private shapeKey() {
     const a = this.app, w = a.selected, t = a.currentTrack;
     return [a.media?.file.name, a.data.tracks.length, a.data.tracks.map(t => t.id + t.name + t.color).join(), w?.id, w?.animate,
-      w?.keys.map(k => k.f).join(), t.id, t.rule.a, t.rule.b].join('|');
+      w?.keys.map(k => k.f).join(), t.id, t.rule.a, t.rule.b, a.presets.map(p => p.name).join('\n'), this.saving].join('|');
   }
 
   update() {
@@ -42,6 +52,19 @@ export class Inspector {
     const w = a.selected, t = a.currentTrack;
     const preset = RULE_PRESETS.findIndex(p => p.rule.a === t.rule.a && (p.rule.a === 1 || p.rule.b === t.rule.b));
     let html = `
+      <section>
+        <h3>Preset</h3>
+        <label class="row"><span>Preset</span><select id="preset"><option value="">Custom</option>${a.presets.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('')}</select></label>
+        <p class="muted small" id="preset-note"></p>
+        ${this.saving ? `
+        <label class="row"><span>Name</span><input id="p-name" type="text" spellcheck="false" placeholder="e.g. Wan 832×480"></label>
+        <div class="btns"><button data-act="p-ok" class="primary">Save</button><button data-act="p-cancel">Cancel</button></div>` : `
+        <div class="btns">
+          <button data-act="p-save" title="Save the output fps and this track's settings as a preset">Save as preset…</button>
+          <button data-act="p-del" class="danger" title="Delete the selected preset">Delete</button>
+        </div>`}
+        <p class="muted small">Sets the output fps and this track's length rule, default length, output size and side multiple. Anything a preset leaves out goes back to its default.</p>
+      </section>
       <section>
         <h3>Video</h3>
         <div class="kv"><span>File</span><b title="${esc(info.fileName)}">${esc(info.fileName)}</b></div>
@@ -77,14 +100,16 @@ export class Inspector {
         <div class="grid5">
           <label><span>X</span><input id="c-x" type="number" step="1"></label>
           <label><span>Y</span><input id="c-y" type="number" step="1"></label>
-          <label><span>W</span><input id="c-w" type="number" step="${trackAspect(t) ? 1 : t.div}"></label>
-          <label><span>H</span><input id="c-h" type="number" step="${trackAspect(t) ? 1 : t.div}"></label>
+          <label><span>W</span><input id="c-w" type="number" step="1"></label>
+          <label><span>H</span><input id="c-h" type="number" step="1"></label>
           <label><span>°</span><input id="c-r" type="number" step="0.5"></label>
         </div>
         <div class="btns">
           <button data-act="rot-">⟲ 90°</button><button data-act="rot+">⟳ 90°</button>
           <button data-act="full" title="Largest crop of this shape">Full</button><button data-act="center">Center</button>
+          ${w ? '<button data-act="reset-win" title="Back to the default crop, keyframes off">Reset window</button>' : ''}
         </div>
+        <p class="muted small" id="crop-out"></p>
         ${w ? `
         <label class="check"><input type="checkbox" id="animate" ${w.animate ? 'checked' : ''}> Animate crop with keyframes</label>
         ${w.animate ? `<div class="keys">${w.keys.map(k => `<div class="key"><button data-act="jump" data-f="${k.f}">◆ frame ${k.f}</button><span class="muted small">@ ${k.f + w.start}</span><button data-act="unkey" data-f="${k.f}" title="Remove key" ${w.keys.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('')}</div>
@@ -106,7 +131,7 @@ export class Inspector {
           <label><span>Out H</span><input id="t-oh" type="number" min="0" step="1" placeholder="auto"></label>
           <label><span>Sides ÷</span><input id="t-div" type="number" min="1" step="1"></label>
         </div>
-        <p class="muted small">Blank output size = crop size. Both set = fixed size, crop shape locked. Sides snap down to multiples of ÷ (H.264 needs 2).</p>
+        <p class="muted small">Blank output size = crop size. Both set = fixed size, crop shape locked. Output sides snap down to multiples of ÷ (H.264 needs 2); the crop stays as drawn and the output takes its centre (dashed frame).</p>
         <div class="btns"><button data-act="t-apply" title="Give every window on this track the crop shown above">Apply crop to all</button><button data-act="t-del" class="danger">Delete track</button></div>
       </section>
       <section>
@@ -135,6 +160,11 @@ export class Inspector {
     const a = this.app, m = a.media;
     if (!m) return;
     const w = a.selected, t = a.currentTrack;
+    const match = a.presets.findIndex(p => presetMatches(p, a.data.fps, t));
+    this.set('preset', match < 0 ? '' : String(match));
+    this.text('preset-note', match < 0 ? `Current: ${presetText(presetFrom('', a.data.fps, t), formatFps)}` : presetText(a.presets[match], formatFps));
+    const del = this.root.querySelector<HTMLButtonElement>('[data-act="p-del"]');
+    if (del) del.disabled = match < 0;
     this.set('fps', a.data.fps == null ? '' : String(Math.round(a.data.fps * 1e6) / 1e6));
     this.text('fps-note', a.data.fps == null
       ? `Native: output frame i is source frame i (${m.tb.count} frames).`
@@ -155,6 +185,12 @@ export class Inspector {
     if (c) {
       const r1 = (v: number) => Math.round(v * 10) / 10;
       this.set('c-x', r1(c.x)); this.set('c-y', r1(c.y)); this.set('c-w', r1(c.w)); this.set('c-h', r1(c.h)); this.set('c-r', r1(c.r));
+      const c0 = w ? cropAt(w, 0) : c;
+      const out = outputSizeFor(c0, t), reg = outputRegion(c, c0, t);
+      const trimmed = Math.abs(reg.w - c.w) > 0.05 || Math.abs(reg.h - c.h) > 0.05;
+      this.text('crop-out', trimmed
+        ? `Output ${out.w}×${out.h} from the centre ${r1(reg.w)}×${r1(reg.h)} of the crop (dashed frame).`
+        : `Output ${out.w}×${out.h}.`);
     }
     this.set('t-name', t.name);
     this.set('t-a', t.rule.a);
@@ -187,6 +223,11 @@ export class Inspector {
         const fps = el.value.trim() ? parseFps(el.value) : null;
         if (el.value.trim() && fps == null) { a.toast('Enter a frame rate like 24, 29.97 or 30000/1001.', 'error'); this.shape = ''; a.invalidate(true); return; }
         a.setFps(fps);
+        return;
+      }
+      case 'preset': {
+        const p = el.value === '' ? null : a.presets[Number(el.value)];
+        if (p) a.applyPreset(p); else a.invalidate(true);
         return;
       }
       case 'win-track': {
@@ -267,6 +308,21 @@ export class Inspector {
     }
   }
 
+  private savePreset() {
+    const a = this.app;
+    const name = this.root.querySelector<HTMLInputElement>('#p-name')?.value.trim();
+    if (!name) { a.toast('Give the preset a name.', 'error'); return; }
+    const replacing = a.presets.some(p => p.name === name);
+    a.savePreset(presetFrom(name, a.data.fps, a.currentTrack));
+    a.toast(replacing ? `Updated preset “${name}”.` : `Saved preset “${name}”.`);
+    this.closeSave();
+  }
+
+  private closeSave() {
+    this.saving = false;
+    this.update();
+  }
+
   private onClick(e: Event) {
     const btn = (e.target as HTMLElement).closest('button');
     if (!btn) return;
@@ -282,8 +338,21 @@ export class Inspector {
       case 'rot-': case 'rot+':
         if (c) a.setCrop({ ...c, r: Math.round(c.r / 90) * 90 + (btn.dataset.act === 'rot+' ? 90 : -90) });
         break;
+      case 'p-save':
+        this.saving = true;
+        this.update();
+        this.root.querySelector<HTMLInputElement>('#p-name')?.focus();
+        break;
+      case 'p-ok': this.savePreset(); break;
+      case 'p-cancel': this.closeSave(); break;
+      case 'p-del': {
+        const p = a.presets.find(p => presetMatches(p, a.data.fps, t));
+        if (p) { a.deletePreset(p.name); a.toast(`Deleted preset “${p.name}”.`); }
+        break;
+      }
+      case 'reset-win': if (w) a.resetWindow(w); break;
       case 'full': {
-        const full = fullCrop(m.W, m.H, a.cropAspect(), t.div);
+        const full = fullCrop(m.W, m.H, a.cropAspect());
         a.setCrop(c?.r ? { ...full, r: c.r } : full);
         break;
       }
@@ -352,7 +421,7 @@ export class OutputPreview {
       this.label.textContent = `${out.w}×${out.h} · decoding…`;
       return;
     }
-    renderOutput(this.ctx, bmp, m.orient, cropAt(w, f), out.w, out.h);
+    renderOutput(this.ctx, bmp, m.orient, outputRegion(cropAt(w, f), cropAt(w, 0), track), out.w, out.h);
     this.label.textContent = `${out.w}×${out.h} · frame ${f + 1}/${w.len}${inside ? '' : ' (clamped: playhead outside)'} · source #${src - m.demux.index.first}`;
   }
 }

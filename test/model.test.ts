@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  snapLen, minLen, isAllowed, cropAt, outputSize, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
-  sanitizeProject, type Win, type Track,
+  snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
+  sanitizeProject, presetFrom, presetMatches, presetValues, sanitizePresets, PRESET_DEFAULTS, type Win, type Track,
 } from '../src/model/project.ts';
 import { Timebase, detectFps, parseFps } from '../src/media/timebase.ts';
 import { buildIndex } from '../src/media/demux.ts';
@@ -41,17 +41,45 @@ test('output size', () => {
 });
 
 test('normalizeCrop keeps crops valid', () => {
-  // Unrotated: inside the frame, whole pixels, sides multiple of div.
-  assert.deepEqual(normalizeCrop(crop(-20.4, 700, 333, 100), 1280, 720, null, 2), crop(0, 620, 334, 100));
+  // Unrotated: inside the frame on whole pixels; sides are not snapped to the output's multiples.
+  assert.deepEqual(normalizeCrop(crop(-20.4, 700, 333, 100), 1280, 720, null), crop(0, 620, 333, 100));
   // Aspect ratio locked, larger than the frame.
-  const c = normalizeCrop(crop(0, 0, 4000, 4000), 1280, 720, 16 / 9, 1);
+  const c = normalizeCrop(crop(0, 0, 4000, 4000), 1280, 720, 16 / 9);
   assert.equal(c.w, 1280);
   assert.equal(c.h, 720);
   // Rotated crops may leave the frame (black fill) and the angle wraps.
-  const r = normalizeCrop(crop(-100, -100, 400, 200, 370), 1280, 720, null, 2);
+  const r = normalizeCrop(crop(-100, -100, 400, 200, 370), 1280, 720, null);
   assert.equal(r.r, 10);
   assert.equal(r.x, -100);
-  assert.deepEqual(fullCrop(1920, 1080, 1, 1), crop(420, 0, 1080, 1080));
+  assert.deepEqual(fullCrop(1920, 1080, 1), crop(420, 0, 1080, 1080));
+});
+
+test('output region trims the crop to the output shape', () => {
+  const t: Track = { ...newTrack(0), div: 16 };
+  // Size from the crop: the centre 992×560 on whole pixels, copied 1:1.
+  const c = crop(10, 20, 1001, 563);
+  assert.deepEqual(outputRegion(c, c, t), crop(14, 21, 992, 560));
+  // A later key at twice the size scales the trimmed area with it.
+  assert.deepEqual(outputRegion(crop(0, 0, 2002, 1126), c, t), crop(9, 3, 1984, 1120));
+  // Rotated crops keep their centre.
+  const r = outputRegion(crop(0, 0, 1001, 563, 30), crop(0, 0, 1001, 563, 30), t);
+  assert.equal(r.x + r.w / 2, 500.5);
+  assert.equal(r.r, 30);
+  // Fixed size: the crop already has the output's shape.
+  assert.deepEqual(outputRegion(crop(0, 0, 832, 480), crop(0, 0, 832, 480), { ...t, outW: 832, outH: 480 }), crop(0, 0, 832, 480));
+});
+
+test('presets leave out defaults and fill them back in', () => {
+  const t: Track = { ...newTrack(0), rule: { a: 4, b: 1 }, outW: 832, outH: 480, div: 16 };
+  const p = presetFrom('Wan', 16, t);
+  assert.deepEqual(p, { name: 'Wan', fps: 16, outW: 832, outH: 480, rule: { a: 4, b: 1 }, div: 16 });
+  assert.ok(presetMatches(p, 16, t));
+  assert.ok(!presetMatches(p, null, t), 'fps differs');
+  assert.deepEqual(presetValues({ name: 'empty' }), PRESET_DEFAULTS);
+  assert.ok(presetMatches({ name: 'empty' }, null, newTrack(0)));
+  const list = sanitizePresets([{ name: ' A ', outW: -3, rule: { a: 8, b: 1 }, fps: 'x' }, { outW: 5 }, null]);
+  assert.deepEqual(list, [{ name: 'A', rule: { a: 8, b: 1 } }]);
+  assert.deepEqual(sanitizePresets('junk'), []);
 });
 
 test('overlap checks', () => {

@@ -6,7 +6,7 @@ import { ThumbServer } from './media/thumbs';
 import { Timebase, detectFps } from './media/timebase';
 import {
   Store, emptyProject, sanitizeProject, newTrack, uid, cropAt, snapLen, fits, freeSpan, fullCrop, refitCrop,
-  normalizeCrop, trackAspect, type Crop, type ProjectData, type Track, type Win,
+  normalizeCrop, trackAspect, presetValues, sanitizePresets, type Crop, type Preset, type ProjectData, type Track, type Win,
 } from './model/project';
 import type { Orientation } from './model/render';
 
@@ -38,6 +38,7 @@ const AUDIO_DRIFT = 0.1;
 
 const CACHE_KEY = 'vs.cacheMB';
 const COLOR_KEY = 'vs.untaggedColor';
+const PRESETS_KEY = 'vs.presets';
 const STATE_PREFIX = 'vs.state:';
 
 /** Everything restored when the same video is opened again. */
@@ -77,6 +78,7 @@ export class App {
   toast: (msg: string, kind?: 'error' | 'info') => void = () => {};
   onLoading: (msg: string | null) => void = () => {};
   view: ViewState | null = null;
+  private presetCache: Preset[] | null = null;
 
   constructor() {
     this.selTrack = this.store.data.tracks[0].id;
@@ -112,6 +114,39 @@ export class App {
   async setUntaggedColor(c: UntaggedColor) {
     try { localStorage.setItem(COLOR_KEY, c); } catch { /* storage unavailable */ }
     if (this.media) await this.open(this.media.file, true);
+  }
+
+  /** Saved presets, shared by every video in this browser. */
+  get presets(): Preset[] {
+    if (!this.presetCache) {
+      try { this.presetCache = sanitizePresets(JSON.parse(localStorage.getItem(PRESETS_KEY) ?? '[]')); } catch { this.presetCache = []; }
+    }
+    return this.presetCache;
+  }
+
+  private writePresets(list: Preset[]) {
+    this.presetCache = list;
+    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); } catch { this.toast('Could not save presets: browser storage is unavailable.', 'error'); }
+    this.invalidate(true);
+  }
+
+  /** Save a preset, replacing one of the same name. */
+  savePreset(p: Preset) {
+    this.writePresets([...this.presets.filter(o => o.name !== p.name), p].sort((a, b) => a.name.localeCompare(b.name)));
+  }
+
+  deletePreset(name: string) {
+    this.writePresets(this.presets.filter(o => o.name !== name));
+  }
+
+  /** Set the frame rate and the current track's settings from a preset, as one undo step. */
+  applyPreset(p: Preset) {
+    const v = presetValues(p);
+    const m = this.media;
+    const fps = v.fps != null && m && Math.abs(v.fps - m.sourceFps) < 1e-9 ? null : v.fps;
+    const cur = this.data.fps;
+    if (fps == null ? cur != null : cur == null || Math.abs(cur - fps) > 1e-9) this.setFps(fps, false);
+    this.updateTrack(this.currentTrack, { outW: v.outW, outH: v.outH, rule: v.rule, defLen: v.defLen, div: v.div });
   }
 
   onDraw(fn: () => void) { this.drawers.push(fn); }
@@ -209,7 +244,7 @@ export class App {
     return this.media?.tb.count ?? 0;
   }
 
-  setFps(fps: number | null) {
+  setFps(fps: number | null, commit = true) {
     const m = this.media;
     if (!m) return;
     if (fps != null && Math.abs(fps - m.sourceFps) < 1e-9) fps = null;
@@ -231,7 +266,7 @@ export class App {
     m.tb = tb;
     this.playhead = tb.frameAt(old.time(this.playhead) + 1e-6);
     this.resolveOverlaps(moved);
-    this.store.commit();
+    if (commit) this.store.commit();
     this.updateWants();
   }
 
@@ -433,12 +468,26 @@ export class App {
 
   // -------------------------------------------------------------- windows
 
-  /** Crop that new windows on this track start with. */
-  private templateCrop(track: Track): Crop {
+  /** The default crop for new windows, in the track's shape. */
+  defaultCropFor(track: Track): Crop {
     const m = this.media!;
     const aspect = trackAspect(track);
     const base = this.data.defaultCrop;
-    return base ? refitCrop(base, m.W, m.H, aspect, track.div) : fullCrop(m.W, m.H, aspect, track.div);
+    return base ? refitCrop(base, m.W, m.H, aspect) : fullCrop(m.W, m.H, aspect);
+  }
+
+  /**
+   * Crop a new window starting at `start` gets: where the window before it (on this track,
+   * else on any track) ends, so consecutive windows line up exactly; else the default crop.
+   */
+  private templateCrop(track: Track, start: number): Crop {
+    const m = this.media!;
+    const before = (id?: string) => this.data.windows
+      .filter(w => (!id || w.track === id) && w.start < start)
+      .sort((a, b) => b.start + b.len - (a.start + a.len) || b.start - a.start)[0];
+    const prev = before(track.id) ?? before();
+    if (!prev) return this.defaultCropFor(track);
+    return refitCrop(cropAt(prev, prev.len - 1), m.W, m.H, trackAspect(track));
   }
 
   /** Add a window without committing (the caller commits, e.g. at the end of a drag). */
@@ -449,7 +498,7 @@ export class App {
   }
 
   private makeWindow(track: Track, start: number, len: number): Win {
-    const w: Win = { id: uid('w'), track: track.id, start, len, animate: false, keys: [{ f: 0, c: this.templateCrop(track) }] };
+    const w: Win = { id: uid('w'), track: track.id, start, len, animate: false, keys: [{ f: 0, c: this.templateCrop(track, start) }] };
     this.data.windows.push(w);
     return w;
   }
@@ -534,14 +583,22 @@ export class App {
   moveToTrack(w: Win, track: Track) {
     const from = this.track(w.track);
     w.track = track.id;
-    if (from && (trackAspect(from) !== trackAspect(track) || from.div !== track.div)) this.refitWindow(w, track);
+    if (from && trackAspect(from) !== trackAspect(track)) this.refitWindow(w, track);
   }
 
   refitWindow(w: Win, track: Track) {
     const m = this.media;
     if (!m) return;
     const aspect = trackAspect(track);
-    for (const k of w.keys) k.c = refitCrop(k.c, m.W, m.H, aspect, track.div);
+    for (const k of w.keys) k.c = refitCrop(k.c, m.W, m.H, aspect);
+  }
+
+  /** Back to the default crop, with keyframes off. */
+  resetWindow(w: Win) {
+    if (!this.media) return;
+    w.animate = false;
+    w.keys = [{ f: 0, c: this.defaultCropFor(this.track(w.track)!) }];
+    this.store.commit();
   }
 
   /** Change a window's range, keeping keys that still fall inside. */
@@ -564,7 +621,7 @@ export class App {
     if (!m) return null;
     const w = this.selected;
     if (w) return cropAt(w, this.localFrame(w));
-    return this.data.defaultCrop ?? fullCrop(m.W, m.H, trackAspect(this.currentTrack), this.currentTrack.div);
+    return this.defaultCropFor(this.currentTrack);
   }
 
   /** Aspect ratio crop edits must keep, if any. */
@@ -582,10 +639,7 @@ export class App {
   setCrop(c: Crop, commit = true) {
     const m = this.media;
     if (!m) return;
-    const track = this.currentTrack;
-    const aspect = this.cropAspect();
-    const div = aspect ? 1 : track.div;
-    const crop = normalizeCrop(c, m.W, m.H, aspect, div);
+    const crop = normalizeCrop(c, m.W, m.H, this.cropAspect());
     const w = this.selected;
     if (w) {
       if (!w.animate) w.keys = [{ f: 0, c: crop }];
@@ -595,8 +649,7 @@ export class App {
         if (k) k.c = crop;
         else { w.keys.push({ f, c: crop }); w.keys.sort((a, b) => a.f - b.f); }
       }
-    }
-    this.data.defaultCrop = { ...crop };
+    } else this.data.defaultCrop = { ...crop };
     if (commit) this.store.commit();
     else this.store.changed();
   }
@@ -679,7 +732,7 @@ export class App {
 
   /** Apply track settings, keeping its windows valid under the new rule and shape. */
   updateTrack(track: Track, patch: Partial<Track>) {
-    const shapeBefore = [trackAspect(track), track.div].join();
+    const shapeBefore = trackAspect(track);
     Object.assign(track, patch);
     const total = this.total;
     const wins = this.data.windows.filter(w => w.track === track.id).sort((a, b) => a.start - b.start);
@@ -688,7 +741,7 @@ export class App {
       const len = snapLen(track.rule, w.len, hi - w.start) ?? snapLen(track.rule, w.len, total - w.start, 'down');
       if (len != null) this.setRange(w, w.start, len);
     }
-    if (shapeBefore !== [trackAspect(track), track.div].join()) for (const w of wins) this.refitWindow(w, track);
+    if (shapeBefore !== trackAspect(track)) for (const w of wins) this.refitWindow(w, track);
     this.resolveOverlaps(wins);
     this.store.commit();
   }
