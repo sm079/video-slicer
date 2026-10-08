@@ -83,7 +83,7 @@ export class Inspector {
         <label class="row"><span>Track</span><select id="win-track">${a.data.tracks.map(tr => `<option value="${tr.id}" ${tr.id === w.track ? 'selected' : ''}>${esc(tr.name)}</option>`).join('')}</select></label>
         <div class="grid3">
           <label><span>Start</span><input id="win-start" type="number" min="0" step="1"></label>
-          <label><span>Length</span><input id="win-len" type="number" min="1" step="${Math.max(1, t.rule.a)}"></label>
+          <label><span>Length</span><input id="win-len" type="number" min="${minLen(t.rule)}" step="${Math.max(1, t.rule.a)}"></label>
           <label><span>End</span><input id="win-end" type="number" min="0" step="1"></label>
         </div>
         <p class="muted small" id="win-out"></p>
@@ -123,7 +123,7 @@ export class Inspector {
         <div class="grid3 rule">
           <label><span>a (step)</span><input id="t-a" type="number" min="1" step="1"></label>
           <label><span>b (offset)</span><input id="t-b" type="number" step="1"></label>
-          <label><span>Default len</span><input id="t-def" type="number" min="1" step="${Math.max(1, t.rule.a)}"></label>
+          <label><span>Default len</span><input id="t-def" type="number" min="${minLen(t.rule)}" step="${Math.max(1, t.rule.a)}"></label>
         </div>
         <p class="muted small" id="t-rule-note"></p>
         <div class="grid3">
@@ -252,6 +252,7 @@ export class Inspector {
         if (others) { a.toast('That would overlap another window on this track.', 'error'); a.invalidate(true); return; }
         a.setRange(w, start, snapped);
         a.store.commit();
+        el.value = String(el.id === 'win-start' ? w.start : el.id === 'win-len' ? w.len : w.start + w.len - 1);
         return;
       }
       case 'c-x': case 'c-y': case 'c-w': case 'c-h': case 'c-r': {
@@ -293,6 +294,7 @@ export class Inspector {
       }
       case 't-def':
         if (v != null) a.updateTrack(t, { defLen: snapLen(t.rule, Math.max(1, Math.round(v))) ?? t.defLen });
+        el.value = String(t.defLen);
         return;
       case 't-ow': case 't-oh': case 't-div': {
         const val = Math.max(el.id === 't-div' ? 1 : 0, Math.round(v ?? 0));
