@@ -8,6 +8,7 @@ import { initMenus, showToast, escapeHtml } from './ui/widgets';
 import { runExport, folderWriter, zipWriter, type ExportOptions, type Format, type Quality } from './export/export';
 import { outputSize } from './model/project';
 import { formatFps } from './media/timebase';
+import { initTheme, themePref, type ThemePref } from './ui/theme';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -25,6 +26,15 @@ const timeline = new Timeline($<HTMLCanvasElement>('timeline'), app);
 const inspector = new Inspector($('inspector'), $('tabs'), app);
 new OutputPreview($<HTMLCanvasElement>('preview'), $('plabel'), app);
 void viewer;
+
+// ------------------------------------------------------------------ theme
+
+const setTheme = initTheme(() => app.invalidate(true));
+const themeRadios = document.querySelectorAll<HTMLInputElement>('input[name=theme]');
+themeRadios.forEach(r => {
+  r.checked = r.value === themePref();
+  r.addEventListener('change', () => { if (r.checked) setTheme(r.value as ThemePref); });
+});
 
 app.toast = (msg, kind = 'info', action) => showToast($('toasts'), msg, { kind, action });
 app.onLoading = msg => {

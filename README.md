@@ -24,7 +24,7 @@ Use a current Chromium browser (Chrome, Edge, Opera). Exporting to a folder need
 7. **Export** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one file per window plus an optional `manifest.json` with each clip's range, source frames, size and crop keys.
 8. **Audio** plays along with playback and loops (<kbd>M</kbd> mutes; the volume sits in the transport bar). Exports carry the source audio from each clip's first frame for exactly the clip's duration: AAC in MP4 (Opus if the browser has no AAC encoder), Opus in WebM, and `audio.wav` beside PNG frames. Audio is resampled to 48 kHz only when the encoder can't take the source rate, and mixed down to stereo.
 
-Hover any control for its name and shortcut, or press <kbd>?</kbd> for the full list.
+Hover any control for its name and shortcut, or press <kbd>?</kbd> for the full list. The menu switches between light, dark and the system theme.
 
 The editor state (windows, tracks, fps, playhead, selection and timeline zoom) autosaves in the browser under a fingerprint of the video's content, so opening the same video again, even renamed or copied elsewhere, picks up where you left off. **Start over** in the menu clears the video's project (undoable), and **Save project** writes it to JSON. The fingerprint is a SHA-256 of the whole file up to 64 MB; for larger files it covers the size and 32 evenly spaced 1 MiB samples, so opening stays fast.
 

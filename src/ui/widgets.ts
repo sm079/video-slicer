@@ -116,7 +116,7 @@ export function initMenus() {
       if ((ev as ToggleEvent).newState === 'closed') document.querySelector(`[data-menu="${menu.id}"]`)?.setAttribute('aria-expanded', 'false');
     });
     menu.addEventListener('keydown', e => {
-      const items = [...menu.querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled)')];
+      const items = [...menu.querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled), [role=radiogroup] input:checked')];
       const i = items.indexOf(document.activeElement as HTMLElement);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();

@@ -3,9 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#111317">
   <title>Video Slicer</title>
+  <script>
+    // Set the theme before first paint so there is no flash.
+    try {
+      var t = localStorage.getItem('vs.theme');
+      if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+  </script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='5' fill='%235b8cff'/%3E%3Cpath d='M12 6v20M20 6v20' stroke='%23fff' stroke-width='2.5'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -100,6 +108,15 @@
     <button role="menuitem" id="m-save" data-media><i data-icon="save"></i><span>Save project</span><kbd>Ctrl+S</kbd></button>
     <button role="menuitem" id="m-load" data-media><i data-icon="file"></i><span>Load project…</span></button>
     <button role="menuitem" id="m-reset" data-media class="danger"><i data-icon="reset"></i><span>Start over</span></button>
+    <div class="menu-sep" role="separator"></div>
+    <div class="menu-theme">
+      <span>Theme</span>
+      <div class="seg" role="radiogroup" aria-label="Theme">
+        <label data-tip="Match system"><input type="radio" name="theme" value="system" aria-label="System"><span><i data-icon="monitor" data-size="14"></i></span></label>
+        <label data-tip="Light"><input type="radio" name="theme" value="light" aria-label="Light"><span><i data-icon="sun" data-size="14"></i></span></label>
+        <label data-tip="Dark"><input type="radio" name="theme" value="dark" aria-label="Dark"><span><i data-icon="moon" data-size="14"></i></span></label>
+      </div>
+    </div>
     <div class="menu-sep" role="separator"></div>
     <button role="menuitem" id="m-help"><i data-icon="keyboard"></i><span>Keyboard shortcuts</span><kbd>?</kbd></button>
   </div>

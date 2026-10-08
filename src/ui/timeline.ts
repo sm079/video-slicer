@@ -36,6 +36,9 @@ export class Timeline {
   private lastClick = { t: 0, x: 0, y: 0 };
   private hoverText = '';
   private hoverAdd = false;
+  /** Theme colours read from CSS at each draw. */
+  private film = '#000';
+  private overview = { fill: '', border: '', shade: '' };
   /** A saved view that arrived before the canvas had a size. */
   private pendingView: unknown = null;
 
@@ -469,6 +472,9 @@ export class Timeline {
     const head = col('--tl-head', '#14161a'), head2 = col('--tl-head-sel', '#1b1e24');
     const fg = col('--tl-fg', '#e7e9ed'), dim = col('--tl-dim', '#6c7380'), line = col('--tl-line', '#23262d');
     const playhead = col('--tl-playhead', '#ff5a52');
+    const headFg = col('--tl-head-fg', fg), grid = col('--tl-grid', 'rgba(255,255,255,.035)');
+    this.film = col('--tl-film', '#000');
+    this.overview = { fill: col('--tl-view', 'rgba(255,255,255,.08)'), border: col('--tl-view-border', 'rgba(255,255,255,.28)'), shade: col('--tl-shade', 'rgba(0,0,0,.25)') };
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, this.w, this.h);
     const m = app.media;
@@ -491,7 +497,7 @@ export class Timeline {
       ctx.fillRect(HEADER_W, y, this.laneW, LANE_H);
     });
     if (this.ppf >= 8) {
-      ctx.strokeStyle = 'rgba(255,255,255,.035)';
+      ctx.strokeStyle = grid;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let f = f0; f <= f1; f++) { const x = Math.round(this.x(f)) + 0.5; ctx.moveTo(x, this.lanesTop); ctx.lineTo(x, this.lanesBottom); }
@@ -530,7 +536,7 @@ export class Timeline {
       ctx.fillStyle = t.color;
       roundRect(ctx, 8, y + 9, 3, LANE_H - 18, 1.5);
       ctx.fill();
-      ctx.fillStyle = sel ? fg : 'rgba(231,233,237,.82)';
+      ctx.fillStyle = sel ? fg : headFg;
       ctx.font = `${sel ? 600 : 500} 12px ${FONT}`;
       ctx.fillText(ellipsize(ctx, t.name, HEADER_W - 30), 19, y + 16);
       ctx.fillStyle = dim;
@@ -660,7 +666,7 @@ export class Timeline {
     ctx.beginPath();
     ctx.rect(HEADER_W, y, this.laneW, h);
     ctx.clip();
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = this.film;
     ctx.fillRect(HEADER_W, y, Math.min(this.laneW, this.x(app.total) - HEADER_W), h);
     const want: number[] = [];
     const firstSlot = Math.floor((this.x(f0) - HEADER_W) / slotW);
@@ -731,7 +737,7 @@ export class Timeline {
     const { ctx, app } = this;
     const total = app.total;
     const y = this.lanesBottom;
-    ctx.fillStyle = 'rgba(0,0,0,.25)';
+    ctx.fillStyle = this.overview.shade;
     ctx.fillRect(0, y, this.w, OVERVIEW_H);
     for (const w of app.data.windows) {
       const t = app.track(w.track);
@@ -742,8 +748,8 @@ export class Timeline {
     }
     const visible = this.laneW / this.ppf;
     if (visible < total * 0.995) {
-      ctx.fillStyle = 'rgba(255,255,255,.08)';
-      ctx.strokeStyle = 'rgba(255,255,255,.28)';
+      ctx.fillStyle = this.overview.fill;
+      ctx.strokeStyle = this.overview.border;
       ctx.lineWidth = 1;
       const vx = HEADER_W + (this.start / total) * this.laneW, vw = Math.max(6, (visible / total) * this.laneW);
       roundRect(ctx, vx + 0.5, y + 1.5, vw - 1, OVERVIEW_H - 3, 3);
