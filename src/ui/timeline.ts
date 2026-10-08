@@ -44,6 +44,20 @@ export class Timeline {
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     app.onDraw(() => this.draw());
+    // Saved as the visible span rather than pixels per frame, so it survives a different window size.
+    app.view = {
+      get: () => ({ start: this.start, span: this.laneW / this.ppf, scrollY: this.scrollY }),
+      set: v => {
+        const s = v as { start?: unknown; span?: unknown; scrollY?: unknown };
+        if (typeof s.span !== 'number' || !(s.span > 0) || !this.w) return;
+        this.ppf = this.laneW / s.span;
+        this.start = Number(s.start) || 0;
+        this.scrollY = Number(s.scrollY) || 0;
+        this.clamp();
+        app.invalidate();
+      },
+      reset: () => this.onMediaChanged(),
+    };
   }
 
   private resize() {
