@@ -70,28 +70,31 @@
     </aside>
 
     <div class="transport">
-      <div class="tc">
-        <input id="t-frame" class="tc-frame" type="number" min="0" step="1" aria-label="Current frame" data-tip="Current frame">
+      <label class="readout" data-tip="Current frame · type to jump">
+        <input id="t-frame" class="tc-frame" type="number" min="0" step="1" aria-label="Current frame">
         <span id="t-total" class="tc-total"></span>
         <span id="t-time" class="tc-time"></span>
-      </div>
-      <div class="transport-main">
-        <button id="t-start" class="btn icon ghost" aria-label="First frame" data-tip="First frame" data-kbd="Home"><i data-icon="first"></i></button>
-        <button id="t-back" class="btn icon ghost" aria-label="Previous frame" data-tip="Previous frame" data-kbd="←"><i data-icon="prev" data-size="18"></i></button>
-        <button id="t-play" class="btn icon play" aria-label="Play" data-tip="Play" data-kbd="Space"><i data-icon="play" data-size="18"></i></button>
-        <button id="t-fwd" class="btn icon ghost" aria-label="Next frame" data-tip="Next frame" data-kbd="→"><i data-icon="next" data-size="18"></i></button>
-        <button id="t-end" class="btn icon ghost" aria-label="Last frame" data-tip="Last frame" data-kbd="End"><i data-icon="last"></i></button>
-        <div id="t-audio" class="volume" hidden>
-          <button id="t-mute" class="btn icon ghost" aria-label="Mute" data-tip="Mute" data-kbd="M"></button>
-          <input id="t-vol" type="range" min="0" max="1" step="0.01" aria-label="Volume">
-        </div>
+      </label>
+      <div class="deck well" role="group" aria-label="Playback">
+        <button id="t-start" class="btn icon ghost" aria-label="First frame" data-tip="First frame" data-kbd="Home"><i data-icon="first" data-size="15"></i></button>
+        <button id="t-back" class="btn icon ghost" aria-label="Previous frame" data-tip="Previous frame" data-kbd="←"><i data-icon="prev" data-size="17"></i></button>
+        <button id="t-play" class="btn play" aria-label="Play" data-tip="Play" data-kbd="Space"><i data-icon="play" data-size="16"></i></button>
+        <button id="t-fwd" class="btn icon ghost" aria-label="Next frame" data-tip="Next frame" data-kbd="→"><i data-icon="next" data-size="17"></i></button>
+        <button id="t-end" class="btn icon ghost" aria-label="Last frame" data-tip="Last frame" data-kbd="End"><i data-icon="last" data-size="15"></i></button>
+        <span class="well-sep"></span>
+        <button id="t-loop" class="btn icon ghost" aria-label="Loop window" aria-pressed="false" data-tip="Loop selected window" data-kbd="L" disabled><i data-icon="loop" data-size="15"></i></button>
       </div>
       <div class="transport-tools">
-        <button id="t-new" class="btn ghost" data-tip="New window at playhead" data-kbd="N"><i data-icon="plus"></i><span>Window</span></button>
-        <span class="divider"></span>
-        <button id="t-zout" class="btn icon ghost" aria-label="Zoom out" data-tip="Zoom out" data-kbd="−"><i data-icon="zoomOut"></i></button>
-        <button id="t-zin" class="btn icon ghost" aria-label="Zoom in" data-tip="Zoom in" data-kbd="+"><i data-icon="zoomIn"></i></button>
-        <button id="t-fit" class="btn icon ghost" aria-label="Fit timeline" data-tip="Fit timeline" data-kbd="F"><i data-icon="fit"></i></button>
+        <div id="t-audio" class="volume" hidden>
+          <button id="t-mute" class="btn icon ghost" aria-label="Mute" data-tip="Mute" data-kbd="M"></button>
+          <input id="t-vol" class="slider" type="range" min="0" max="1" step="0.01" aria-label="Volume">
+        </div>
+        <button id="t-new" class="btn soft" data-tip="New window at playhead" data-kbd="N"><i data-icon="plus"></i><span>Window</span></button>
+        <div class="well" role="group" aria-label="Timeline zoom">
+          <button id="t-zout" class="btn icon ghost" aria-label="Zoom out" data-tip="Zoom out" data-kbd="−"><i data-icon="minus" data-size="15"></i></button>
+          <button id="t-fit" class="btn icon ghost" aria-label="Fit timeline" data-tip="Fit timeline" data-kbd="F"><i data-icon="fit" data-size="15"></i></button>
+          <button id="t-zin" class="btn icon ghost" aria-label="Zoom in" data-tip="Zoom in" data-kbd="+"><i data-icon="plus" data-size="15"></i></button>
+        </div>
       </div>
     </div>
 
