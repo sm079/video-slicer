@@ -2,6 +2,7 @@ import type { App } from '../app';
 import { cropAt, freeSpan, snapLen, ruleText, outputSize, type Win, type Key } from '../model/project';
 import { rawToDisplay } from '../model/render';
 import { tip } from './widgets';
+import { Tween, zoomPath } from './motion';
 
 const HEADER_W = 168;
 const RULER_H = 26;
@@ -33,6 +34,8 @@ export class Timeline {
   private scrollY = 0;
   private fitted = false;
   private drag: Drag | null = null;
+  /** A running zoom or pan and where it ends. */
+  private anim: { tween: Tween; to: { start: number; ppf: number } } | null = null;
   private lastClick = { t: 0, x: 0, y: 0 };
   private hoverText = '';
   private hoverAdd = false;
@@ -64,6 +67,7 @@ export class Timeline {
         if (typeof s.span !== 'number' || !(s.span > 0)) return;
         if (!this.w) { this.pendingView = v; return; }
         this.pendingView = null;
+        this.anim = null;
         this.ppf = this.laneW / s.span;
         this.start = Number(s.start) || 0;
         this.scrollY = Number(s.scrollY) || 0;
@@ -93,29 +97,38 @@ export class Timeline {
   private get lanesTop() { return RULER_H + FILM_H; }
   private get lanesBottom() { return this.h - OVERVIEW_H; }
 
-  fit() {
+  fit(smooth = false) {
     const total = this.app.total;
     if (!total || !this.w) return;
-    this.ppf = this.laneW / total;
-    this.start = 0;
     this.fitted = true;
-    this.app.invalidate();
+    this.goTo(0, this.laneW / total, smooth);
   }
 
-  zoomBy(k: number, anchorX = HEADER_W + this.laneW / 2) {
-    const f = this.frameAt(anchorX);
-    this.ppf *= k;
-    this.clamp();
-    this.start = f - (anchorX - HEADER_W) / this.ppf;
-    this.clamp();
-    this.app.invalidate();
+  zoomBy(k: number, anchorX = HEADER_W + this.laneW / 2, smooth = true) {
+    // Repeated presses build on where the running zoom is heading, not where it is.
+    const from = this.anim?.to ?? { start: this.start, ppf: this.ppf };
+    const f = from.start + (anchorX - HEADER_W) / from.ppf;
+    const ppf = this.limits(from.start, from.ppf * k).ppf;
+    this.goTo(f - (anchorX - HEADER_W) / ppf, ppf, smooth);
   }
 
   /** Zoom to show a frame range. */
-  show(a: number, b: number) {
-    this.ppf = this.laneW / Math.max(8, (b - a) * 1.3);
-    this.clamp();
-    this.start = (a + b) / 2 - this.laneW / this.ppf / 2;
+  show(a: number, b: number, smooth = true) {
+    const ppf = this.limits(this.start, this.laneW / Math.max(8, (b - a) * 1.3)).ppf;
+    this.goTo((a + b) / 2 - this.laneW / ppf / 2, ppf, smooth);
+  }
+
+  /** Move the view, gliding there unless `smooth` is off. */
+  private goTo(start: number, ppf: number, smooth: boolean) {
+    const to = this.limits(start, ppf);
+    this.anim = null;
+    if (smooth && this.w) {
+      const path = zoomPath(this.start, this.laneW / this.ppf, to.start, this.laneW / to.ppf);
+      this.anim = { to, tween: new Tween(280, k => { const p = path(k); this.start = p.left; this.ppf = this.laneW / p.span; }) };
+    } else {
+      this.start = to.start;
+      this.ppf = to.ppf;
+    }
     this.clamp();
     this.app.invalidate();
   }
@@ -127,11 +140,15 @@ export class Timeline {
     this.fit();
   }
 
-  private clamp() {
+  private limits(start: number, ppf: number) {
     const total = Math.max(1, this.app.total);
-    this.ppf = Math.max(this.laneW / total / 1.05, Math.min(60, this.ppf));
-    const visible = this.laneW / this.ppf;
-    this.start = Math.max(-visible * 0.02, Math.min(total - visible * 0.98, this.start));
+    ppf = Math.max(this.laneW / total / 1.05, Math.min(60, ppf));
+    const visible = this.laneW / ppf;
+    return { start: Math.max(-visible * 0.02, Math.min(total - visible * 0.98, start)), ppf };
+  }
+
+  private clamp() {
+    ({ start: this.start, ppf: this.ppf } = this.limits(this.start, this.ppf));
     const lanesH = this.app.data.tracks.length * (LANE_H + LANE_GAP) + LANE_H;
     this.scrollY = Math.max(0, Math.min(lanesH - (this.lanesBottom - this.lanesTop), this.scrollY));
   }
@@ -148,7 +165,7 @@ export class Timeline {
   private follow() {
     const visible = this.laneW / this.ppf;
     const p = this.app.playhead;
-    if (p < this.start || p > this.start + visible - 1) { this.start = p - visible * 0.1; this.clamp(); }
+    if (p < this.start || p > this.start + visible - 1) { this.anim = null; this.start = p - visible * 0.1; this.clamp(); }
   }
 
   // ------------------------------------------------------------ hit tests
@@ -189,6 +206,7 @@ export class Timeline {
   private down(e: PointerEvent) {
     const app = this.app;
     if (!app.media) return;
+    this.anim = null;
     const { x, y } = this.pos(e);
     this.canvas.setPointerCapture(e.pointerId);
     const now = performance.now();
@@ -450,6 +468,7 @@ export class Timeline {
 
   private wheel(e: WheelEvent) {
     e.preventDefault();
+    this.anim = null;
     const { x, y } = this.pos(e);
     if (x < HEADER_W && y >= this.lanesTop) {
       this.scrollY += e.deltaY;
@@ -463,7 +482,7 @@ export class Timeline {
       this.app.invalidate();
       return;
     }
-    this.zoomBy(Math.exp(-e.deltaY * 0.002), Math.max(HEADER_W, x));
+    this.zoomBy(Math.exp(-e.deltaY * 0.002), Math.max(HEADER_W, x), false);
   }
 
   // -------------------------------------------------------------- drawing
@@ -485,6 +504,8 @@ export class Timeline {
     ctx.fillRect(0, 0, this.w, this.h);
     const m = app.media;
     if (!m) return;
+    if (this.anim && !this.anim.tween.step()) this.anim = null;
+    if (this.anim) app.invalidate();
     if (app.play) this.follow();
     this.clamp();
     const total = app.total;

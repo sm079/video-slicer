@@ -1,6 +1,7 @@
 import type { App } from '../app';
 import { cropAt, outputRegion, outputSizeFor, type Crop } from '../model/project';
 import { cropCorners, rawToDisplay } from '../model/render';
+import { Tween, lerp } from './motion';
 
 type Handle = { kind: 'move' } | { kind: 'rotate' } | { kind: 'resize'; sx: -1 | 0 | 1; sy: -1 | 0 | 1 } | { kind: 'draw' } | { kind: 'pan' };
 
@@ -15,6 +16,7 @@ export class Viewer {
   private panY = 0;
   private drag: { h: Handle; start: Crop; p0: [number, number]; s0: [number, number]; pan0: [number, number] } | null = null;
   private hover: Handle | null = null;
+  private anim: Tween | null = null;
 
   private chipText = '';
 
@@ -35,8 +37,13 @@ export class Viewer {
   }
 
   resetView() {
-    this.zoom = 1;
-    this.panX = this.panY = 0;
+    const { zoom, panX, panY } = this;
+    // Zoom geometrically so the glide reads as one even motion.
+    this.anim = new Tween(320, k => {
+      this.zoom = zoom ** (1 - k);
+      this.panX = lerp(panX, 0, k);
+      this.panY = lerp(panY, 0, k);
+    });
     this.app.invalidate();
   }
 
@@ -125,6 +132,7 @@ export class Viewer {
   }
 
   private down(e: PointerEvent) {
+    this.anim = null;
     const app = this.app;
     if (!app.media) return;
     const p = this.toDisplay(e);
@@ -193,6 +201,7 @@ export class Viewer {
   private wheel(e: WheelEvent) {
     if (!this.app.media) return;
     e.preventDefault();
+    this.anim = null;
     const r = this.canvas.getBoundingClientRect();
     const dpr = devicePixelRatio || 1;
     const mx = (e.clientX - r.left) * dpr - this.canvas.width / 2, my = (e.clientY - r.top) * dpr - this.canvas.height / 2;
@@ -206,6 +215,8 @@ export class Viewer {
 
   draw() {
     const { ctx, canvas, app } = this;
+    if (this.anim && !this.anim.step()) this.anim = null;
+    if (this.anim) app.invalidate();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = getComputedStyle(canvas).getPropertyValue('--viewer-bg') || '#111';
     ctx.fillRect(0, 0, canvas.width, canvas.height);

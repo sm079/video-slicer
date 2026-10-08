@@ -1,4 +1,5 @@
 import { icon } from './icons';
+import { reducedMotion } from './motion';
 
 // --------------------------------------------------------------- tooltips
 
@@ -68,6 +69,9 @@ class Tooltip {
 
   private position(x: number, y: number, above: boolean) {
     const el = this.el;
+    // Already showing: slide over to the new spot rather than blinking there.
+    el.classList.toggle('glide', el.classList.contains('on'));
+    el.classList.toggle('below', !above);
     el.classList.add('on');
     const w = el.offsetWidth, h = el.offsetHeight;
     const left = Math.max(8, Math.min(innerWidth - w - 8, x - w / 2));
@@ -134,7 +138,39 @@ function placeUnder(pop: HTMLElement, anchor: HTMLElement) {
   const w = pop.offsetWidth;
   const alignRight = r.left + w > innerWidth - 8;
   pop.style.left = `${Math.max(8, alignRight ? r.right - w : r.left)}px`;
+  pop.style.transformOrigin = alignRight ? 'top right' : 'top left';
   pop.style.top = `${r.bottom + 6}px`;
+}
+
+// ----------------------------------------------------- segmented controls
+
+/**
+ * Give every `.seg` a thumb that slides to its checked option. It snaps into place
+ * whenever the control is shown or resized and only glides when the choice changes.
+ */
+export function initSegments() {
+  const place = (seg: HTMLElement, glide: boolean) => {
+    const thumb = seg.querySelector<HTMLElement>(':scope > .seg-thumb')!;
+    const on = seg.querySelector<HTMLElement>('label:has(input:checked)');
+    if (!seg.offsetWidth) return;
+    thumb.hidden = !on;
+    if (!on) return;
+    seg.classList.toggle('thumb-live', glide);
+    thumb.style.transform = `translateX(${on.offsetLeft}px)`;
+    thumb.style.width = `${on.offsetWidth}px`;
+  };
+  const ro = new ResizeObserver(entries => entries.forEach(e => place(e.target as HTMLElement, false)));
+  document.querySelectorAll<HTMLElement>('.seg').forEach(seg => {
+    const thumb = document.createElement('span');
+    thumb.className = 'seg-thumb';
+    seg.prepend(thumb);
+    seg.classList.add('has-thumb');
+    ro.observe(seg);
+  });
+  document.addEventListener('change', e => {
+    const seg = (e.target as Element).closest<HTMLElement>('.seg.has-thumb');
+    if (seg) place(seg, true);
+  });
 }
 
 // ---------------------------------------------------------- scrub fields
@@ -191,6 +227,9 @@ export interface ToastOptions {
   action?: { label: string; run: () => void };
 }
 
+/** Space between stacked toasts, as in `.toasts`. */
+const GAP = 8;
+
 export function showToast(host: HTMLElement, msg: string, opts: ToastOptions = {}) {
   const kind = opts.kind ?? 'info';
   const el = document.createElement('div');
@@ -201,7 +240,15 @@ export function showToast(host: HTMLElement, msg: string, opts: ToastOptions = {
   text.className = 'toast-text';
   text.textContent = msg;
   el.append(text);
-  const close = () => { el.classList.add('gone'); setTimeout(() => el.remove(), 250); };
+  const close = () => {
+    if (el.classList.contains('gone')) return;
+    el.classList.add('gone');
+    if (reducedMotion()) { el.remove(); return; }
+    el.animate([
+      { height: `${el.offsetHeight}px`, opacity: 1 },
+      { height: '0px', paddingTop: '0px', paddingBottom: '0px', borderWidth: '0px', marginTop: el.previousElementSibling ? `-${GAP}px` : '0px', opacity: 0, transform: 'scale(.94)' },
+    ], { duration: 220, easing: 'cubic-bezier(.4, 0, .2, 1)' }).onfinish = () => el.remove();
+  };
   if (opts.action) {
     const b = document.createElement('button');
     b.className = 'btn ghost sm';
@@ -216,6 +263,12 @@ export function showToast(host: HTMLElement, msg: string, opts: ToastOptions = {
   x.onclick = close;
   el.append(x);
   host.append(el);
+  if (!reducedMotion()) {
+    el.animate([
+      { height: '0px', paddingTop: '0px', paddingBottom: '0px', marginTop: el.previousElementSibling ? `-${GAP}px` : '0px', opacity: 0, transform: 'translateY(10px) scale(.94)' },
+      { height: `${el.offsetHeight}px`, opacity: 1 },
+    ], { duration: 340, easing: 'cubic-bezier(.34, 1.3, .64, 1)' });
+  }
   // Keep the newest few.
   while (host.children.length > 4) host.firstElementChild!.remove();
   let timer = window.setTimeout(close, kind === 'error' ? 7000 : opts.action ? 6000 : 3500);
