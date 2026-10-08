@@ -1,13 +1,15 @@
 import type { App } from '../app';
 import { cropAt, freeSpan, snapLen, ruleText, outputSize, type Win, type Key } from '../model/project';
 import { rawToDisplay } from '../model/render';
+import { tip } from './widgets';
 
-const HEADER_W = 156;
-const RULER_H = 24;
+const HEADER_W = 168;
+const RULER_H = 26;
 const FILM_H = 40;
-const LANE_H = 36;
-const LANE_GAP = 3;
+const LANE_H = 38;
+const LANE_GAP = 2;
 const OVERVIEW_H = 12;
+const FONT = getComputedStyle(document.documentElement).getPropertyValue('--font').trim() || 'system-ui, sans-serif';
 const EDGE = 7;
 const MAGNET = 7;
 
@@ -33,6 +35,9 @@ export class Timeline {
   private drag: Drag | null = null;
   private lastClick = { t: 0, x: 0, y: 0 };
   private hoverText = '';
+  private hoverAdd = false;
+  /** A saved view that arrived before the canvas had a size. */
+  private pendingView: unknown = null;
 
   constructor(private canvas: HTMLCanvasElement, private app: App) {
     this.ctx = canvas.getContext('2d')!;
@@ -43,13 +48,19 @@ export class Timeline {
     canvas.addEventListener('pointercancel', () => { if (this.drag) { this.drag = null; app.store.revert(); } });
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
+    canvas.addEventListener('pointerleave', () => {
+      tip.hide();
+      if (this.hoverAdd) { this.hoverAdd = false; app.invalidate(); }
+    });
     app.onDraw(() => this.draw());
     // Saved as the visible span rather than pixels per frame, so it survives a different window size.
     app.view = {
       get: () => ({ start: this.start, span: this.laneW / this.ppf, scrollY: this.scrollY }),
       set: v => {
         const s = v as { start?: unknown; span?: unknown; scrollY?: unknown };
-        if (typeof s.span !== 'number' || !(s.span > 0) || !this.w) return;
+        if (typeof s.span !== 'number' || !(s.span > 0)) return;
+        if (!this.w) { this.pendingView = v; return; }
+        this.pendingView = null;
         this.ppf = this.laneW / s.span;
         this.start = Number(s.start) || 0;
         this.scrollY = Number(s.scrollY) || 0;
@@ -70,6 +81,7 @@ export class Timeline {
     this.canvas.style.width = `${r.width}px`;
     this.canvas.style.height = `${r.height}px`;
     if (!this.fitted) this.fit();
+    if (this.pendingView && this.w) this.app.view?.set(this.pendingView);
     this.clamp();
     this.app.invalidate();
   }
@@ -106,6 +118,7 @@ export class Timeline {
   }
 
   onMediaChanged() {
+    this.pendingView = null;
     this.fitted = false;
     this.scrollY = 0;
     this.fit();
@@ -405,19 +418,25 @@ export class Timeline {
   private hoverCursor(x: number, y: number) {
     let cursor = 'default';
     let text = '';
+    const addRow = x < HEADER_W && this.laneAt(y) === this.app.data.tracks.length;
     if (y < this.lanesTop && x >= HEADER_W) cursor = 'col-resize';
     else if (y >= this.lanesTop && y < this.lanesBottom && x >= HEADER_W) {
       const hit = this.windowAt(x, y);
       if (hit) {
-        cursor = hit.part === 'body' ? 'grab' : hit.part === 'play' ? 'pointer' : hit.part === 'key' ? 'ew-resize' : 'ew-resize';
-        text = `${hit.w.len} frames · ${hit.w.start}–${hit.w.start + hit.w.len - 1}`;
-      } else if (this.app.data.tracks[this.laneAt(y)]) {
-        cursor = 'crosshair';
-        text = 'Drag to create a window · double-click for the default length';
-      }
-    } else if (x < HEADER_W && this.laneAt(y) === this.app.data.tracks.length) cursor = 'pointer';
+        cursor = hit.part === 'body' ? 'grab' : hit.part === 'play' ? 'pointer' : 'ew-resize';
+        const n = this.app.data.windows.filter(o => o.track === hit.w.track && o.start < hit.w.start).length + 1;
+        text = hit.part === 'play' ? (this.app.play?.loop === hit.w.id ? 'Stop loop' : 'Loop window')
+          : hit.part === 'key' ? `Key at frame ${hit.key!.f} · drag to retime`
+          : `Window ${n} · ${hit.w.start}–${hit.w.start + hit.w.len - 1} · ${hit.w.len} frames`;
+      } else if (this.app.data.tracks[this.laneAt(y)]) cursor = 'crosshair';
+    } else if (y >= this.lanesBottom && x >= HEADER_W) cursor = 'pointer';
+    else if (addRow || (x < HEADER_W && this.app.data.tracks[this.laneAt(y)])) cursor = 'pointer';
     this.canvas.style.cursor = cursor;
-    if (text !== this.hoverText) { this.hoverText = text; this.canvas.title = text; }
+    if (addRow !== this.hoverAdd) { this.hoverAdd = addRow; this.app.invalidate(); }
+    if (text !== this.hoverText) this.hoverText = text;
+    const r = this.canvas.getBoundingClientRect();
+    if (text) tip.at(r.left + x, r.top + y, text);
+    else tip.hide();
   }
 
   private wheel(e: WheelEvent) {
@@ -446,17 +465,14 @@ export class Timeline {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const css = getComputedStyle(this.canvas);
     const col = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
-    const bg = col('--tl-bg', '#16181d'), lane = col('--tl-lane', '#1d2027'), lane2 = col('--tl-lane-sel', '#252a35');
-    const fg = col('--tl-fg', '#c9ced8'), dim = col('--tl-dim', '#7d8594'), line = col('--tl-line', '#2c313b');
+    const bg = col('--tl-bg', '#101215'), lane = col('--tl-lane', '#15171b'), lane2 = col('--tl-lane-sel', '#1a1d23');
+    const head = col('--tl-head', '#14161a'), head2 = col('--tl-head-sel', '#1b1e24');
+    const fg = col('--tl-fg', '#e7e9ed'), dim = col('--tl-dim', '#6c7380'), line = col('--tl-line', '#23262d');
+    const playhead = col('--tl-playhead', '#ff5a52');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, this.w, this.h);
     const m = app.media;
-    if (!m) {
-      ctx.fillStyle = dim;
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillText('Open a video to start.', HEADER_W + 12, 40);
-      return;
-    }
+    if (!m) return;
     if (app.play) this.follow();
     this.clamp();
     const total = app.total;
@@ -475,7 +491,7 @@ export class Timeline {
       ctx.fillRect(HEADER_W, y, this.laneW, LANE_H);
     });
     if (this.ppf >= 8) {
-      ctx.strokeStyle = line;
+      ctx.strokeStyle = 'rgba(255,255,255,.035)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let f = f0; f <= f1; f++) { const x = Math.round(this.x(f)) + 0.5; ctx.moveTo(x, this.lanesTop); ctx.lineTo(x, this.lanesBottom); }
@@ -483,35 +499,55 @@ export class Timeline {
     }
     // Area beyond the end of the video.
     const endX = this.x(total);
-    if (endX < this.w) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(endX, this.lanesTop, this.w - endX, this.lanesBottom - this.lanesTop); }
+    if (endX < this.w) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(endX, this.lanesTop, this.w - endX, this.lanesBottom - this.lanesTop);
+      ctx.fillStyle = line;
+      ctx.fillRect(Math.round(endX), this.lanesTop, 1, this.lanesBottom - this.lanesTop);
+    }
     ctx.save();
     ctx.beginPath();
     ctx.rect(HEADER_W, this.lanesTop, this.laneW, this.lanesBottom - this.lanesTop);
     ctx.clip();
     for (const w of app.data.windows) this.drawWindow(w, fg);
+    if (!app.data.windows.length && app.data.tracks.length) {
+      // First-run hint inside the first lane.
+      const y = this.laneY(0);
+      ctx.fillStyle = dim;
+      ctx.font = `12px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText('Drag here to draw a window  ·  double-click for default length', HEADER_W + Math.min(this.laneW, endX - HEADER_W) / 2, y + LANE_H / 2 + 4);
+      ctx.textAlign = 'left';
+    }
     ctx.restore();
     // Headers.
     app.data.tracks.forEach((t, i) => {
       const y = this.laneY(i);
       if (y > this.lanesBottom || y + LANE_H < this.lanesTop) return;
       const sel = t.id === app.currentTrack.id;
-      ctx.fillStyle = sel ? lane2 : lane;
-      ctx.fillRect(0, y, HEADER_W - 2, LANE_H);
+      ctx.fillStyle = sel ? head2 : head;
+      ctx.fillRect(0, y, HEADER_W - 1, LANE_H);
       ctx.fillStyle = t.color;
-      ctx.fillRect(0, y, 4, LANE_H);
-      ctx.fillStyle = fg;
-      ctx.font = `${sel ? '600 ' : ''}12px system-ui, sans-serif`;
-      ctx.fillText(ellipsize(ctx, t.name, HEADER_W - 20), 12, y + 15);
+      roundRect(ctx, 8, y + 9, 3, LANE_H - 18, 1.5);
+      ctx.fill();
+      ctx.fillStyle = sel ? fg : 'rgba(231,233,237,.82)';
+      ctx.font = `${sel ? 600 : 500} 12px ${FONT}`;
+      ctx.fillText(ellipsize(ctx, t.name, HEADER_W - 30), 19, y + 16);
       ctx.fillStyle = dim;
-      ctx.font = '11px system-ui, sans-serif';
-      const n = app.data.windows.filter(w => w.track === t.id).length;
-      const size = t.outW && t.outH ? `${t.outW}×${t.outH}` : t.outW ? `w ${t.outW}` : t.outH ? `h ${t.outH}` : 'crop size';
-      ctx.fillText(ellipsize(ctx, `${ruleText(t.rule)} · ${n} win · ${size}`, HEADER_W - 20), 12, y + 29);
+      ctx.font = `11px ${FONT}`;
+      const size = t.outW && t.outH ? `${t.outW}×${t.outH}` : t.outW ? `W ${t.outW}` : t.outH ? `H ${t.outH}` : 'Crop size';
+      const rule = ruleText(t.rule);
+      ctx.fillText(ellipsize(ctx, `${size} · ${rule === 'any' ? 'any length' : rule}`, HEADER_W - 30), 19, y + 30);
     });
     const addY = this.laneY(app.data.tracks.length);
-    ctx.fillStyle = dim;
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText('+ Add track', 12, addY + 20);
+    if (this.hoverAdd) {
+      ctx.fillStyle = head2;
+      roundRect(ctx, 4, addY + 5, HEADER_W - 9, LANE_H - 10, 6);
+      ctx.fill();
+    }
+    ctx.fillStyle = this.hoverAdd ? fg : dim;
+    ctx.font = `500 12px ${FONT}`;
+    ctx.fillText('+  Add track', 16, addY + LANE_H / 2 + 4);
     ctx.restore();
 
     // Ruler and filmstrip.
@@ -521,32 +557,31 @@ export class Timeline {
     this.drawRuler(f0, f1, fg, dim, line);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, HEADER_W, this.lanesTop);
-    ctx.fillStyle = dim;
-    ctx.font = '11px system-ui, sans-serif';
-    const tb = m.tb;
-    ctx.fillText(`${total} frames @ ${round(tb.fps)}${tb.native ? ' (native)' : ''}`, 10, 16);
-    ctx.fillText(`${(this.ppf >= 1 ? `${round(this.ppf)} px/frame` : `${round(1 / this.ppf)} frames/px`)}`, 10, RULER_H + 16);
+    ctx.fillStyle = line;
+    ctx.fillRect(0, this.lanesTop - 1, this.w, 1);
+    ctx.fillRect(HEADER_W - 1, 0, 1, this.lanesBottom);
 
     // Playhead.
     const px = this.x(app.playhead);
     if (this.ppf >= 3) {
-      ctx.fillStyle = 'rgba(255,80,80,.18)';
-      ctx.fillRect(px, RULER_H, this.ppf, this.lanesBottom - RULER_H);
+      ctx.fillStyle = 'rgba(255,90,82,.12)';
+      ctx.fillRect(Math.max(HEADER_W, px), RULER_H, this.ppf, this.lanesBottom - RULER_H);
     }
     const cx = px + this.ppf / 2;
     if (cx >= HEADER_W - 1) {
-      ctx.strokeStyle = '#ff5050';
+      ctx.strokeStyle = playhead;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cx, 0);
+      ctx.moveTo(cx, 6);
       ctx.lineTo(cx, this.lanesBottom);
       ctx.stroke();
-      ctx.fillStyle = '#ff5050';
+      ctx.fillStyle = playhead;
       ctx.beginPath();
-      ctx.moveTo(cx - 6, 0); ctx.lineTo(cx + 6, 0); ctx.lineTo(cx, 8);
+      ctx.roundRect(cx - 5, 1, 10, 9, 2);
+      ctx.moveTo(cx - 5, 9); ctx.lineTo(cx + 5, 9); ctx.lineTo(cx, 14);
       ctx.fill();
     }
-    this.drawOverview(dim, line);
+    this.drawOverview(dim, line, playhead);
   }
 
   private drawWindow(w: Win, fg: string) {
@@ -560,23 +595,27 @@ export class Timeline {
     const sel = w.id === app.selWin;
     const looping = app.play?.loop === w.id;
     const width = Math.max(2, x1 - x0);
-    ctx.globalAlpha = sel ? 0.95 : 0.7;
+    ctx.globalAlpha = sel || looping ? 1 : 0.72;
     ctx.fillStyle = track.color;
-    roundRect(ctx, x0, y, width, h, 4);
+    roundRect(ctx, x0, y, width, h, 5);
     ctx.fill();
     ctx.globalAlpha = 1;
+    // A soft top highlight gives the block some depth.
+    ctx.fillStyle = 'rgba(255,255,255,.12)';
+    roundRect(ctx, x0, y, width, 1.5, 1);
+    ctx.fill();
     if (sel || looping) {
-      ctx.strokeStyle = looping ? '#fff' : fg;
-      ctx.lineWidth = sel ? 2 : 1;
-      roundRect(ctx, x0 + 1, y + 1, width - 2, h - 2, 4);
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 2;
+      roundRect(ctx, x0 - 1, y - 1, width + 2, h + 2, 6);
       ctx.stroke();
     }
     ctx.fillStyle = '#0b0d12';
     let tx = x0 + 6;
     if (width >= 34) {
       // Play / loop button.
-      ctx.fillStyle = 'rgba(0,0,0,.28)';
-      roundRect(ctx, x0 + 4, y + 3, 18, 18, 3);
+      ctx.fillStyle = looping ? 'rgba(0,0,0,.5)' : 'rgba(0,0,0,.26)';
+      roundRect(ctx, x0 + 4, y + 3, 18, 18, 4);
       ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.beginPath();
@@ -587,10 +626,10 @@ export class Timeline {
     if (width > 60) {
       const n = app.data.windows.filter(o => o.track === w.track && o.start < w.start).length + 1;
       const out = outputSize(w, track);
-      ctx.fillStyle = '#0b0d12';
-      ctx.font = '600 11px system-ui, sans-serif';
-      const label = `#${n}  ${w.len}f${width > 150 ? `  ${out.w}×${out.h}` : ''}`;
-      ctx.fillText(ellipsize(ctx, label, x1 - tx - 6), tx, y + 15);
+      ctx.fillStyle = 'rgba(8,9,12,.92)';
+      ctx.font = `600 11px ${FONT}`;
+      const label = `${n}  ·  ${w.len} f${width > 150 ? `  ·  ${out.w}×${out.h}` : ''}`;
+      ctx.fillText(ellipsize(ctx, label, x1 - tx - 6), tx, y + 16);
     }
     // Keyframes.
     if (w.animate) {
@@ -658,8 +697,7 @@ export class Timeline {
   private drawRuler(f0: number, f1: number, fg: string, dim: string, line: string) {
     const { ctx, app } = this;
     const tb = app.media!.tb;
-    ctx.fillStyle = 'rgba(0,0,0,.2)';
-    ctx.fillRect(HEADER_W, 0, this.laneW, RULER_H);
+
     const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000, 20000, 50000, 100000, 200000, 500000];
     const step = steps.find(s => s * this.ppf >= 70) ?? 1000000;
     const minor = steps.find(s => s * this.ppf >= 8 && step % s === 0) ?? step;
@@ -669,37 +707,50 @@ export class Timeline {
       const x = Math.round(this.x(f)) + 0.5;
       if (x < HEADER_W) continue;
       const major = f % step === 0;
-      ctx.moveTo(x, major ? 0 : RULER_H - 6);
+      ctx.moveTo(x, major ? RULER_H - 9 : RULER_H - 4);
       ctx.lineTo(x, RULER_H);
     }
     ctx.stroke();
-    ctx.font = '11px system-ui, sans-serif';
     for (let f = Math.floor(f0 / step) * step; f <= f1; f += step) {
       const x = this.x(f);
       if (x < HEADER_W) continue;
+      ctx.font = `500 11px ${FONT}`;
       ctx.fillStyle = fg;
-      ctx.fillText(String(f), x + 3, 11);
-      ctx.fillStyle = dim;
-      ctx.fillText(timecode(tb.time(f)), x + 3, 21);
+      ctx.fillText(String(f), x + 4, 12);
+      const fw = ctx.measureText(String(f)).width;
+      ctx.font = `10.5px ${FONT}`;
+      const tc = timecode(tb.time(f));
+      if (fw + ctx.measureText(tc).width + 22 <= step * this.ppf) {
+        ctx.fillStyle = dim;
+        ctx.fillText(tc, x + 10 + fw, 12);
+      }
     }
   }
 
-  private drawOverview(dim: string, line: string) {
+  private drawOverview(dim: string, line: string, playhead: string) {
     const { ctx, app } = this;
     const total = app.total;
     const y = this.lanesBottom;
     ctx.fillStyle = 'rgba(0,0,0,.25)';
-    ctx.fillRect(HEADER_W, y, this.laneW, OVERVIEW_H);
+    ctx.fillRect(0, y, this.w, OVERVIEW_H);
     for (const w of app.data.windows) {
       const t = app.track(w.track);
       ctx.fillStyle = t?.color ?? dim;
-      ctx.fillRect(HEADER_W + (w.start / total) * this.laneW, y + 3, Math.max(1, (w.len / total) * this.laneW), OVERVIEW_H - 6);
+      ctx.globalAlpha = 0.7;
+      ctx.fillRect(HEADER_W + (w.start / total) * this.laneW, y + 4, Math.max(1, (w.len / total) * this.laneW), OVERVIEW_H - 8);
+      ctx.globalAlpha = 1;
     }
     const visible = this.laneW / this.ppf;
-    ctx.strokeStyle = dim;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(HEADER_W + (this.start / total) * this.laneW + 0.5, y + 0.5, Math.max(4, (visible / total) * this.laneW) - 1, OVERVIEW_H - 1);
-    ctx.fillStyle = '#ff5050';
+    if (visible < total * 0.995) {
+      ctx.fillStyle = 'rgba(255,255,255,.08)';
+      ctx.strokeStyle = 'rgba(255,255,255,.28)';
+      ctx.lineWidth = 1;
+      const vx = HEADER_W + (this.start / total) * this.laneW, vw = Math.max(6, (visible / total) * this.laneW);
+      roundRect(ctx, vx + 0.5, y + 1.5, vw - 1, OVERVIEW_H - 3, 3);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.fillStyle = playhead;
     ctx.fillRect(HEADER_W + (app.playhead / total) * this.laneW, y, 1.5, OVERVIEW_H);
     ctx.strokeStyle = line;
     ctx.beginPath();
@@ -720,8 +771,6 @@ function ellipsize(ctx: CanvasRenderingContext2D, s: string, max: number) {
   while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
   return s + '…';
 }
-
-const round = (v: number) => String(Math.round(v * 100) / 100);
 
 export function timecode(sec: number) {
   const s = Math.max(0, sec);

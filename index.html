@@ -3,113 +3,224 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111317">
   <title>Video Slicer</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='28' height='16' rx='3' fill='%234f8cff'/%3E%3Crect x='9' y='5' width='3' height='22' fill='%23fff'/%3E%3Crect x='20' y='5' width='3' height='22' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='5' fill='%235b8cff'/%3E%3Cpath d='M12 6v20M20 6v20' stroke='%23fff' stroke-width='2.5'/%3E%3C/svg%3E">
 </head>
 <body>
-  <div id="app">
+  <div id="app" class="no-media">
     <header class="topbar">
-      <div class="brand">Video&nbsp;Slicer</div>
-      <button id="open" class="primary">Open video…</button>
-      <input id="file" type="file" accept="video/*,.mkv,.avi,.flv,.wmv,.ts,.mts,.m2ts,.3gp,.ogv,.mpg,.mpeg,.vob,.mxf" hidden>
-      <span id="fileinfo" class="muted"></span>
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="6" width="28" height="20" rx="5" fill="var(--accent)"/><path d="M12 6v20M20 6v20" stroke="#fff" stroke-width="2.5"/></svg>
+        <span>Video Slicer</span>
+      </div>
+      <button id="fileinfo" class="file-chip" type="button" hidden data-tip="Source details" data-tip-pos="bottom"></button>
       <span class="spacer"></span>
-      <button id="undo" title="Undo (Ctrl+Z)">↶</button>
-      <button id="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
-      <button id="save" title="Save the project as JSON">Save project</button>
-      <button id="load" title="Load a project JSON for this video">Load project</button>
-      <button id="reset" title="Start this video over: clear its windows, tracks and settings (undoable)">Reset</button>
-      <input id="projfile" type="file" accept=".json,application/json" hidden>
-      <button id="export" class="primary">Export…</button>
-      <button id="help" title="Shortcuts (?)">?</button>
+      <div class="btn-group">
+        <button id="undo" class="btn icon ghost" aria-label="Undo" data-tip="Undo" data-kbd="Ctrl+Z" data-tip-pos="bottom"><i data-icon="undo"></i></button>
+        <button id="redo" class="btn icon ghost" aria-label="Redo" data-tip="Redo" data-kbd="Ctrl+Shift+Z" data-tip-pos="bottom"><i data-icon="redo"></i></button>
+      </div>
+      <button class="btn icon ghost" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" data-menu="main-menu" data-tip="Menu" data-tip-pos="bottom"><i data-icon="more"></i></button>
+      <button id="export" class="btn primary" data-kbd="Ctrl+E" data-tip="Export clips" data-tip-pos="bottom" disabled><i data-icon="export"></i><span>Export</span></button>
     </header>
-    <main class="work">
-      <section class="viewer"><canvas id="viewer"></canvas>
-        <div id="drop" class="drop"><div><b>Drop a video here</b><span>or use Open video…  ·  MP4, MOV, MKV, WebM, AVI, FLV, TS, …</span></div></div>
-      </section>
-      <div id="vsplit" class="vsplit" title="Drag to resize, double-click to reset"></div>
-      <aside class="side">
-        <div class="preview"><div class="ptitle">Output</div><div class="pbox"><canvas id="preview"></canvas></div><div id="plabel" class="muted small"></div></div>
-        <div id="inspector" class="inspector"></div>
-      </aside>
-    </main>
+
+    <section class="viewer">
+      <canvas id="viewer" aria-label="Source frame and crop"></canvas>
+      <button id="viewer-fit" class="viewer-zoom" hidden data-tip="Reset view" data-kbd="Double-click"></button>
+      <div class="welcome" id="welcome">
+        <div class="welcome-card">
+          <div class="welcome-icon"><i data-icon="film" data-size="28"></i></div>
+          <h1>Open a video to start slicing</h1>
+          <p>Drop a file anywhere, or choose one.</p>
+          <button id="open" class="btn primary lg"><i data-icon="open"></i><span>Choose video</span></button>
+          <div class="welcome-meta">
+            <span>MP4 · MOV · MKV · WebM · AVI · TS</span>
+            <span class="dot"></span>
+            <span data-tip="Decoding, editing and encoding all run in this tab"><i data-icon="lock" data-size="12"></i> Stays on your device</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="vsplit" class="splitter v" role="separator" aria-orientation="vertical" aria-label="Resize side panel" data-tip="Drag to resize · double-click to reset"></div>
+
+    <aside class="side">
+      <div class="preview">
+        <div class="panel-head">
+          <span class="eyebrow">Output</span>
+          <span id="plabel" class="meta"></span>
+        </div>
+        <div class="pbox empty"><canvas id="preview" aria-label="Output frame"></canvas><span class="pbox-empty">No window selected</span></div>
+      </div>
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="window" aria-selected="true">Window</button>
+        <button role="tab" data-tab="track" aria-selected="false">Track</button>
+        <button role="tab" data-tab="project" aria-selected="false">Project</button>
+      </div>
+      <div id="inspector" class="inspector" role="tabpanel"></div>
+    </aside>
+
     <div class="transport">
-      <button id="t-start" title="First frame (Home)">⏮</button>
-      <button id="t-back" title="Previous frame (←)">◀︎|</button>
-      <button id="t-play" class="play" title="Play / pause (Space)">▶</button>
-      <button id="t-fwd" title="Next frame (→)">|▶︎</button>
-      <button id="t-end" title="Last frame (End)">⏭</button>
-      <label class="frame">Frame <input id="t-frame" type="number" min="0" step="1"> <span id="t-total" class="muted"></span></label>
-      <span id="t-time" class="mono muted"></span>
-      <span id="t-audio" class="audio-ctl" hidden><button id="t-mute" title="Mute (M)">🔊</button><input id="t-vol" type="range" min="0" max="1" step="0.01" title="Volume"></span>
-      <span class="spacer"></span>
-      <button id="t-new" title="New window at the playhead (N)">+ Window</button>
-      <button id="t-track" title="Add a track">+ Track</button>
-      <button id="t-zin" title="Zoom in (+)">＋</button>
-      <button id="t-zout" title="Zoom out (−)">－</button>
-      <button id="t-fit" title="Fit the whole video (F)">Fit</button>
+      <div class="tc">
+        <input id="t-frame" class="tc-frame" type="number" min="0" step="1" aria-label="Current frame" data-tip="Current frame">
+        <span id="t-total" class="tc-total"></span>
+        <span id="t-time" class="tc-time"></span>
+      </div>
+      <div class="transport-main">
+        <button id="t-start" class="btn icon ghost" aria-label="First frame" data-tip="First frame" data-kbd="Home"><i data-icon="first"></i></button>
+        <button id="t-back" class="btn icon ghost" aria-label="Previous frame" data-tip="Previous frame" data-kbd="←"><i data-icon="prev" data-size="18"></i></button>
+        <button id="t-play" class="btn icon play" aria-label="Play" data-tip="Play" data-kbd="Space"><i data-icon="play" data-size="18"></i></button>
+        <button id="t-fwd" class="btn icon ghost" aria-label="Next frame" data-tip="Next frame" data-kbd="→"><i data-icon="next" data-size="18"></i></button>
+        <button id="t-end" class="btn icon ghost" aria-label="Last frame" data-tip="Last frame" data-kbd="End"><i data-icon="last"></i></button>
+        <div id="t-audio" class="volume" hidden>
+          <button id="t-mute" class="btn icon ghost" aria-label="Mute" data-tip="Mute" data-kbd="M"></button>
+          <input id="t-vol" type="range" min="0" max="1" step="0.01" aria-label="Volume">
+        </div>
+      </div>
+      <div class="transport-tools">
+        <button id="t-new" class="btn ghost" data-tip="New window at playhead" data-kbd="N"><i data-icon="plus"></i><span>Window</span></button>
+        <span class="divider"></span>
+        <button id="t-zout" class="btn icon ghost" aria-label="Zoom out" data-tip="Zoom out" data-kbd="−"><i data-icon="zoomOut"></i></button>
+        <button id="t-zin" class="btn icon ghost" aria-label="Zoom in" data-tip="Zoom in" data-kbd="+"><i data-icon="zoomIn"></i></button>
+        <button id="t-fit" class="btn icon ghost" aria-label="Fit timeline" data-tip="Fit timeline" data-kbd="F"><i data-icon="fit"></i></button>
+      </div>
     </div>
-    <div id="split" class="split" title="Drag to resize, double-click to reset"></div>
-    <section class="timeline"><canvas id="timeline"></canvas></section>
+
+    <div id="split" class="splitter h" role="separator" aria-orientation="horizontal" aria-label="Resize timeline" data-tip="Drag to resize · double-click to reset"></div>
+    <section class="timeline"><canvas id="timeline" aria-label="Timeline"></canvas></section>
   </div>
 
-  <div id="loading" class="loading" hidden><div class="spinner"></div><span id="loading-text"></span></div>
-  <div id="toasts" class="toasts"></div>
+  <input id="file" type="file" accept="video/*,.mkv,.avi,.flv,.wmv,.ts,.mts,.m2ts,.3gp,.ogv,.mpg,.mpeg,.vob,.mxf" hidden>
+  <input id="projfile" type="file" accept=".json,application/json" hidden>
 
-  <dialog id="export-dlg">
-    <form method="dialog" class="dlg">
-      <h2>Export windows</h2>
-      <label class="row"><span>Windows</span>
-        <select id="x-scope"><option value="all">All windows</option><option value="track">Current track</option><option value="sel">Selected window</option></select></label>
-      <label class="row"><span>Format</span>
-        <select id="x-format"><option value="mp4">MP4 (H.264)</option><option value="webm">WebM (VP9)</option><option value="png">PNG frames (lossless)</option></select></label>
-      <label class="row"><span>Quality</span>
-        <select id="x-quality"><option value="high">High</option><option value="very-high" selected>Very high</option><option value="max">Maximum</option></select></label>
-      <label class="row"><span>Save to</span>
-        <select id="x-dest"><option value="folder">A folder…</option><option value="zip">ZIP download</option></select></label>
-      <label class="check"><input id="x-audio" type="checkbox" checked> <span id="x-audio-label">Include audio</span></label>
-      <label class="check"><input id="x-manifest" type="checkbox" checked> Write manifest.json (ranges, crops, sizes)</label>
-      <p id="x-summary" class="muted small"></p>
-      <p class="muted small">At the project frame rate. Every output frame is rendered exactly as the Output preview shows it. Audio is the source audio under each clip, cut to the clip's length: AAC (or Opus) in MP4, Opus in WebM, and a WAV next to PNG frames.</p>
-      <div id="x-progress" class="progress" hidden><div class="bar"><div></div></div><span class="small muted"></span></div>
-      <div class="btns end">
-        <button id="x-cancel" value="cancel" formnovalidate>Close</button>
-        <button id="x-go" class="primary" type="button">Export</button>
+  <div id="main-menu" class="menu" popover role="menu" aria-label="Menu">
+    <button role="menuitem" id="m-open"><i data-icon="open"></i><span>Open video…</span><kbd>Ctrl+O</kbd></button>
+    <div class="menu-sep" role="separator"></div>
+    <button role="menuitem" id="m-save" data-media><i data-icon="save"></i><span>Save project</span><kbd>Ctrl+S</kbd></button>
+    <button role="menuitem" id="m-load" data-media><i data-icon="file"></i><span>Load project…</span></button>
+    <button role="menuitem" id="m-reset" data-media class="danger"><i data-icon="reset"></i><span>Start over</span></button>
+    <div class="menu-sep" role="separator"></div>
+    <button role="menuitem" id="m-help"><i data-icon="keyboard"></i><span>Keyboard shortcuts</span><kbd>?</kbd></button>
+  </div>
+
+  <div id="drop" class="drop-overlay" aria-hidden="true"><div><i data-icon="open" data-size="32"></i><b>Drop to open</b></div></div>
+  <div id="loading" class="loading" hidden><div class="spinner"></div><span id="loading-text"></span></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <dialog id="export-dlg" class="dialog" aria-labelledby="x-title">
+    <form method="dialog" id="x-form">
+      <header class="dlg-head">
+        <h2 id="x-title">Export</h2>
+        <button value="cancel" class="btn icon ghost" aria-label="Close" formnovalidate><i data-icon="x"></i></button>
+      </header>
+      <div class="dlg-body" id="x-options">
+        <div class="opt">
+          <span class="opt-label">Clips</span>
+          <div class="seg" role="radiogroup" aria-label="Clips">
+            <label><input type="radio" name="x-scope" value="all" checked><span>All <em id="x-n-all"></em></span></label>
+            <label><input type="radio" name="x-scope" value="track"><span>This track <em id="x-n-track"></em></span></label>
+            <label><input type="radio" name="x-scope" value="sel"><span>Selected</span></label>
+          </div>
+        </div>
+        <div class="opt">
+          <span class="opt-label">Format</span>
+          <div class="seg" role="radiogroup" aria-label="Format">
+            <label data-tip="H.264, AAC audio"><input type="radio" name="x-format" value="mp4" checked><span>MP4</span></label>
+            <label data-tip="VP9, Opus audio"><input type="radio" name="x-format" value="webm"><span>WebM</span></label>
+            <label data-tip="Lossless frames, WAV audio"><input type="radio" name="x-format" value="png"><span>PNG</span></label>
+          </div>
+        </div>
+        <div class="opt" id="x-quality-row">
+          <span class="opt-label">Quality</span>
+          <div class="seg" role="radiogroup" aria-label="Quality">
+            <label><input type="radio" name="x-quality" value="high"><span>High</span></label>
+            <label><input type="radio" name="x-quality" value="very-high" checked><span>Very high</span></label>
+            <label><input type="radio" name="x-quality" value="max"><span>Max</span></label>
+          </div>
+        </div>
+        <div class="opt">
+          <span class="opt-label">Save to</span>
+          <div class="seg" role="radiogroup" aria-label="Save to">
+            <label id="x-dest-folder"><input type="radio" name="x-dest" value="folder" checked><span><i data-icon="folder" data-size="14"></i>Folder</span></label>
+            <label><input type="radio" name="x-dest" value="zip"><span><i data-icon="zip" data-size="14"></i>ZIP</span></label>
+          </div>
+        </div>
+        <div class="opt">
+          <span class="opt-label">Include</span>
+          <div class="checks">
+            <label class="switch" id="x-audio-wrap" data-tip="Source audio under each clip"><input id="x-audio" type="checkbox" checked><span class="track"></span><span>Audio</span></label>
+            <label class="switch" data-tip="manifest.json with ranges, crops and sizes"><input id="x-manifest" type="checkbox" checked><span class="track"></span><span>Manifest</span></label>
+          </div>
+        </div>
       </div>
+      <div id="x-progress" class="x-progress" hidden>
+        <div class="x-progress-top"><span id="x-progress-title"></span><span id="x-progress-pct" class="meta"></span></div>
+        <div class="bar"><div></div></div>
+        <span id="x-progress-detail" class="meta"></span>
+      </div>
+      <footer class="dlg-foot">
+        <span id="x-summary" class="meta"></span>
+        <span class="spacer"></span>
+        <button id="x-cancel" value="cancel" class="btn" formnovalidate>Cancel</button>
+        <button id="x-go" class="btn primary" type="button" autofocus><i data-icon="export"></i><span>Export</span></button>
+      </footer>
     </form>
   </dialog>
 
-  <dialog id="help-dlg">
-    <form method="dialog" class="dlg help">
-      <h2>How it works</h2>
-      <p>Set the output fps (blank = native, frame for frame). Every frame on the timeline is an output frame; the viewer and the Output panel show exactly the frame that will be rendered.</p>
-      <h3>Timeline</h3>
-      <ul>
-        <li><b>Drag</b> on an empty track to draw a window; it snaps to the track's length rule.</li>
-        <li><b>Double-click</b> an empty track, or press <kbd>N</kbd>, for a default-length window. Overlapping windows go to the next free track.</li>
-        <li>Drag a window to slide it (up/down moves it to another track), drag its edges to resize. Edges snap to the playhead and other windows; hold <kbd>Alt</kbd> to stop snapping.</li>
-        <li>Click <b>▶</b> on a window to loop it. Double-click a window to zoom to it.</li>
-        <li>Wheel zooms, <kbd>Shift</kbd>+wheel pans, right/middle-drag pans. Wheel over the track names scrolls the tracks.</li>
-      </ul>
-      <h3>Crop</h3>
-      <ul>
-        <li>Drag inside the box to move, handles to resize (<kbd>Alt</kbd> from the centre), the round handle to rotate (<kbd>Shift</kbd> snaps to 15°). Drag outside the box to draw a new one.</li>
-        <li>Turn on <b>Animate</b> to keyframe the crop; every edit then keys it at the playhead. Drag the ◆ marks on the timeline to retime keys.</li>
-        <li>Wheel zooms the viewer, right-drag pans, double-click outside the crop resets the view.</li>
-      </ul>
-      <h3>Keys</h3>
-      <table class="keys-table">
-        <tr><td><kbd>Space</kbd></td><td>Play / pause</td><td><kbd>L</kbd></td><td>Loop selected window</td></tr>
-        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Step a frame (<kbd>Shift</kbd> 10)</td><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last frame</td></tr>
-        <tr><td><kbd>N</kbd></td><td>New window at playhead</td><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplicate window</td></tr>
-        <tr><td><kbd>I</kbd> <kbd>O</kbd></td><td>Set window start / end</td><td><kbd>Del</kbd></td><td>Delete window</td></tr>
-        <tr><td><kbd>K</kbd></td><td>Key crop at playhead</td><td><kbd>[</kbd> <kbd>]</kbd></td><td>Previous / next key</td></tr>
-        <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Previous / next window</td><td><kbd>Tab</kbd></td><td>Next window (all tracks)</td></tr>
-        <tr><td><kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>Zoom in / out / fit</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo (<kbd>Shift</kbd> redo)</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Stop / deselect</td><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export</td></tr>
-        <tr><td><kbd>M</kbd></td><td>Mute / unmute</td><td></td><td></td></tr>
-      </table>
-      <div class="btns end"><button value="ok" class="primary">Close</button></div>
+  <dialog id="help-dlg" class="dialog wide" aria-labelledby="help-title">
+    <form method="dialog">
+      <header class="dlg-head">
+        <h2 id="help-title">Keyboard &amp; mouse</h2>
+        <button value="ok" class="btn icon ghost" aria-label="Close"><i data-icon="x"></i></button>
+      </header>
+      <div class="dlg-body shortcuts">
+        <section>
+          <h3>Playback</h3>
+          <dl>
+            <dt>Play / pause</dt><dd><kbd>Space</kbd></dd>
+            <dt>Step frame</dt><dd><kbd>←</kbd><kbd>→</kbd></dd>
+            <dt>Step 10 frames</dt><dd><kbd>Shift</kbd><kbd>←</kbd><kbd>→</kbd></dd>
+            <dt>First / last frame</dt><dd><kbd>Home</kbd><kbd>End</kbd></dd>
+            <dt>Loop window</dt><dd><kbd>L</kbd></dd>
+            <dt>Mute</dt><dd><kbd>M</kbd></dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Windows</h3>
+          <dl>
+            <dt>Draw</dt><dd>Drag on a track</dd>
+            <dt>New at playhead</dt><dd><kbd>N</kbd> or double-click</dd>
+            <dt>Set start / end</dt><dd><kbd>I</kbd><kbd>O</kbd></dd>
+            <dt>Previous / next</dt><dd><kbd>↑</kbd><kbd>↓</kbd><kbd>Tab</kbd></dd>
+            <dt>Duplicate</dt><dd><kbd>Ctrl</kbd><kbd>D</kbd></dd>
+            <dt>Delete</dt><dd><kbd>Del</kbd></dd>
+            <dt>Free move</dt><dd>Hold <kbd>Alt</kbd></dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Crop</h3>
+          <dl>
+            <dt>Redraw</dt><dd>Drag outside the box</dd>
+            <dt>Resize from centre</dt><dd>Hold <kbd>Alt</kbd></dd>
+            <dt>Snap rotation 15°</dt><dd>Hold <kbd>Shift</kbd></dd>
+            <dt>Keyframe</dt><dd><kbd>K</kbd></dd>
+            <dt>Previous / next key</dt><dd><kbd>[</kbd><kbd>]</kbd></dd>
+            <dt>Zoom / pan view</dt><dd>Wheel · right-drag</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Timeline &amp; app</h3>
+          <dl>
+            <dt>Zoom</dt><dd><kbd>+</kbd><kbd>−</kbd> or wheel</dd>
+            <dt>Fit</dt><dd><kbd>F</kbd></dd>
+            <dt>Pan</dt><dd><kbd>Shift</kbd>+wheel · right-drag</dd>
+            <dt>Undo / redo</dt><dd><kbd>Ctrl</kbd><kbd>Z</kbd> · <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Z</kbd></dd>
+            <dt>Export</dt><dd><kbd>Ctrl</kbd><kbd>E</kbd></dd>
+            <dt>Deselect / stop</dt><dd><kbd>Esc</kbd></dd>
+          </dl>
+        </section>
+      </div>
     </form>
   </dialog>
   <script type="module" src="/src/main.ts"></script>

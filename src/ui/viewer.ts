@@ -16,8 +16,11 @@ export class Viewer {
   private drag: { h: Handle; start: Crop; p0: [number, number]; s0: [number, number]; pan0: [number, number] } | null = null;
   private hover: Handle | null = null;
 
-  constructor(private canvas: HTMLCanvasElement, private app: App) {
+  private chipText = '';
+
+  constructor(private canvas: HTMLCanvasElement, private app: App, private zoomChip: HTMLButtonElement) {
     this.ctx = canvas.getContext('2d')!;
+    zoomChip.addEventListener('click', () => this.resetView());
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement!);
     canvas.addEventListener('pointerdown', e => this.down(e));
     canvas.addEventListener('pointermove', e => this.move(e));
@@ -25,10 +28,26 @@ export class Viewer {
     canvas.addEventListener('pointercancel', () => { if (this.drag) { this.drag = null; app.store.revert(); } });
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
     canvas.addEventListener('dblclick', e => {
-      if (!this.hitCrop(this.toDisplay(e))) { this.zoom = 1; this.panX = this.panY = 0; app.invalidate(); }
+      if (!this.hitCrop(this.toDisplay(e))) this.resetView();
     });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     app.onDraw(() => this.draw());
+  }
+
+  resetView() {
+    this.zoom = 1;
+    this.panX = this.panY = 0;
+    this.app.invalidate();
+  }
+
+  /** The zoom chip shows the scale in source pixels while the view is zoomed or panned. */
+  private updateChip() {
+    const zoomed = !!this.app.media && (Math.abs(this.zoom - 1) > 1e-3 || this.panX !== 0 || this.panY !== 0);
+    const text = zoomed ? `${Math.round(this.scale / (devicePixelRatio || 1) * 100)}%` : '';
+    if (text === this.chipText) return;
+    this.chipText = text;
+    this.zoomChip.hidden = !zoomed;
+    this.zoomChip.textContent = text;
   }
 
   private resize() {
@@ -190,6 +209,7 @@ export class Viewer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = getComputedStyle(canvas).getPropertyValue('--viewer-bg') || '#111';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    this.updateChip();
     const m = app.media;
     if (!m) return;
     const src = m.tb.src(app.playhead);
@@ -212,13 +232,18 @@ export class Viewer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (!exact) {
       const dpr = devicePixelRatio || 1;
-      ctx.font = `${12 * dpr}px system-ui, sans-serif`;
-      ctx.fillStyle = 'rgba(0,0,0,.6)';
-      const t = m.frames.isMissing(src) ? 'frame missing in source' : 'decoding…';
+      ctx.font = `500 ${12 * dpr}px ${FONT}`;
+      const t = m.frames.isMissing(src) ? 'Frame missing in source' : 'Decoding…';
       const tw = ctx.measureText(t).width;
-      ctx.fillRect(canvas.width - tw - 22 * dpr, 10 * dpr, tw + 12 * dpr, 20 * dpr);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(t, canvas.width - tw - 16 * dpr, 24 * dpr);
+      const bw = tw + 20 * dpr, bh = 24 * dpr, bx = canvas.width - bw - 12 * dpr, by = 12 * dpr;
+      ctx.fillStyle = 'rgba(17,19,23,.82)';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, bh / 2);
+      ctx.fill();
+      ctx.fillStyle = '#e7e9ed';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t, bx + 10 * dpr, by + bh / 2 + 0.5 * dpr);
+      ctx.textBaseline = 'alphabetic';
     }
   }
 
@@ -238,7 +263,7 @@ export class Viewer {
     ctx.closePath();
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fill('evenodd');
-    const color = w ? app.track(w.track)?.color ?? '#4f8cff' : '#bbbbbb';
+    const color = w ? app.track(w.track)?.color ?? '#5b8cff' : '#c4c8d0';
     // Thirds.
     ctx.save();
     ctx.translate(c.x + c.w / 2, c.y + c.h / 2);
@@ -296,21 +321,27 @@ export class Viewer {
     ctx.restore();
     // Label.
     const out = outputSizeFor(c0, track);
-    const label = `${fmt(c.w)}×${fmt(c.h)}${trimmed || out.w !== Math.round(c.w) || out.h !== Math.round(c.h) ? ` → ${out.w}×${out.h}` : ''}${c.r ? `  ${fmt(c.r)}°` : ''}${outside ? '  · playhead outside window' : ''}${!w ? '  · default crop' : ''}`;
-    ctx.font = `${12 * px}px system-ui, sans-serif`;
+    const label = `${fmt(c.w)} × ${fmt(c.h)}${trimmed || out.w !== Math.round(c.w) || out.h !== Math.round(c.h) ? `  →  ${out.w} × ${out.h}` : ''}${c.r ? `  ·  ${fmt(c.r)}°` : ''}`;
+    ctx.font = `500 ${11.5 * px}px ${FONT}`;
     const tw = ctx.measureText(label).width;
     const top = pts.reduce((a, b) => (b[1] < a[1] ? b : a));
-    const lx = top[0] - tw / 2;
+    const inv = this.view().inverse();
+    const viewTL = inv.transformPoint(new DOMPoint(0, 0)), viewBR = inv.transformPoint(new DOMPoint(this.canvas.width, this.canvas.height));
+    const lx = Math.max(viewTL.x + 10 * px, Math.min(viewBR.x - tw - 10 * px, top[0] - tw / 2));
     let ly = top[1] - 34 * px - ROT_OFFSET * px * 0.2;
     // No room above (crop at the top of the view): put it just inside the crop instead.
-    const viewTop = this.view().inverse().transformPoint(new DOMPoint(0, 0)).y;
-    if (ly - 13 * px < viewTop) ly = top[1] + 20 * px;
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillRect(lx - 5 * px, ly - 13 * px, tw + 10 * px, 18 * px);
-    ctx.fillStyle = '#fff';
+    const viewTop = viewTL.y;
+    if (ly - 13 * px < viewTop) ly = top[1] + 22 * px;
+    ctx.fillStyle = 'rgba(17,19,23,0.82)';
+    ctx.beginPath();
+    ctx.roundRect(lx - 8 * px, ly - 14 * px, tw + 16 * px, 20 * px, 10 * px);
+    ctx.fill();
+    ctx.fillStyle = '#e7e9ed';
     ctx.fillText(label, lx, ly);
   }
 }
+
+const FONT = getComputedStyle(document.documentElement).getPropertyValue('--font').trim() || 'system-ui, sans-serif';
 
 const fmt = (v: number) => (Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1));
 

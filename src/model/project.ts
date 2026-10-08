@@ -389,6 +389,9 @@ export class Store {
     else { this.snapshot = JSON.stringify(data); this.past = []; this.future = []; this.changed(); }
   }
 
+  get canUndo() { return this.past.length > 0; }
+  get canRedo() { return this.future.length > 0; }
+
   undo() {
     const prev = this.past.pop();
     if (!prev) return false;
