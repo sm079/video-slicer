@@ -17,6 +17,8 @@ export interface Win {
   /** Always at least one key. With animate off there is exactly one, at f = 0. */
   keys: Key[];
   animate: boolean;
+  /** Output size for this window alone, in place of the track's; 0 on a side means derive it from the crop. */
+  size?: { w: number; h: number };
 }
 
 /** Windows combined into one clip: they play and export one after another, in `wins` order. */
@@ -124,9 +126,14 @@ export function outputSizeFor(c0: Crop, track: Track): { w: number; h: number } 
   return { w: cw, h: ch };
 }
 
-/** Output frame size of a window: fixed by the track, or the crop at the window start snapped to div. */
+/** The track's output settings as they apply to one window: its own size, if set, replaces the track's. */
+export function sizing(track: Track, win?: Win): Track {
+  return win?.size ? { ...track, outW: win.size.w, outH: win.size.h } : track;
+}
+
+/** Output frame size of a window: fixed by its size or the track's, or the crop at the window start snapped to div. */
 export function outputSize(win: Win, track: Track): { w: number; h: number } {
-  return outputSizeFor(cropAt(win, 0), track);
+  return outputSizeFor(cropAt(win, 0), sizing(track, win));
 }
 
 /**
@@ -335,6 +342,8 @@ export function sanitizeProject(raw: unknown): ProjectData {
       len: Math.max(1, Math.round(num(w.len, 1))),
       animate: !!w.animate,
       keys: w.keys.map(k => ({ f: Math.max(0, Math.round(num(k.f, 0))), c: crop(k.c) })).sort((a, b) => a.f - b.f),
+      ...(w.size && typeof w.size === 'object'
+        ? { size: { w: Math.max(0, Math.round(num(w.size.w, 0))), h: Math.max(0, Math.round(num(w.size.h, 0))) } } : {}),
     }));
   const groups: Group[] = (Array.isArray(p.groups) ? p.groups : [])
     .filter(g => g && Array.isArray(g.wins))

@@ -6,7 +6,7 @@ import { ThumbServer } from './media/thumbs';
 import { Timebase, detectFps } from './media/timebase';
 import {
   Store, emptyProject, sanitizeProject, groupOf, combine, uncombine, cleanGroups, newTrack, uid, cropAt, snapLen, fits, freeSpan, fullCrop, refitCrop,
-  normalizeCrop, trackAspect, presetValues, sanitizePresets, type Crop, type Preset, type ProjectData, type Track, type Win,
+  normalizeCrop, trackAspect, sizing, presetValues, sanitizePresets, type Crop, type Preset, type ProjectData, type Track, type Win,
 } from './model/project';
 import type { Orientation } from './model/render';
 
@@ -697,17 +697,26 @@ export class App {
     }
   }
 
-  /** Re-assign a window to a track, refitting crops when the track's shape differs. */
+  /** Re-assign a window to a track, refitting crops when its shape there differs. */
   moveToTrack(w: Win, track: Track) {
     const from = this.track(w.track);
     w.track = track.id;
-    if (from && trackAspect(from) !== trackAspect(track)) this.refitWindow(w, track);
+    if (from && trackAspect(sizing(from, w)) !== trackAspect(sizing(track, w))) this.refitWindow(w, track);
+  }
+
+  /** Set a window's own output size, or null to follow its track's; refits its crops if the shape changes. */
+  setWindowSize(w: Win, size: { w: number; h: number } | null) {
+    const track = this.track(w.track)!;
+    const before = trackAspect(sizing(track, w));
+    if (size) w.size = size; else delete w.size;
+    if (before !== trackAspect(sizing(track, w))) this.refitWindow(w, track);
+    this.store.commit();
   }
 
   refitWindow(w: Win, track: Track) {
     const m = this.media;
     if (!m) return;
-    const aspect = trackAspect(track);
+    const aspect = trackAspect(sizing(track, w));
     for (const k of w.keys) k.c = refitCrop(k.c, m.W, m.H, aspect);
   }
 
@@ -715,7 +724,7 @@ export class App {
   resetWindow(w: Win) {
     if (!this.media) return;
     w.animate = false;
-    w.keys = [{ f: 0, c: this.defaultCropFor(this.track(w.track)!) }];
+    w.keys = [{ f: 0, c: this.defaultCropFor(sizing(this.track(w.track)!, w)) }];
     this.store.commit();
   }
 
@@ -745,8 +754,7 @@ export class App {
   /** Aspect ratio crop edits must keep, if any. */
   cropAspect(): number | null {
     const w = this.selected;
-    const track = this.currentTrack;
-    const fixed = trackAspect(track);
+    const fixed = trackAspect(sizing(this.currentTrack, w));
     if (fixed) return fixed;
     // Keys of differing shape would stretch against the fixed output size.
     if (w && w.animate && w.keys.length > 1) return w.keys[0].c.w / w.keys[0].c.h;
@@ -853,16 +861,17 @@ export class App {
 
   /** Apply track settings, keeping its windows valid under the new rule and shape. */
   updateTrack(track: Track, patch: Partial<Track>) {
-    const shapeBefore = trackAspect(track);
+    const wins = this.data.windows.filter(w => w.track === track.id).sort((a, b) => a.start - b.start);
+    // Windows with their own size keep their shape.
+    const shapeBefore = new Map(wins.map(w => [w, trackAspect(sizing(track, w))]));
     Object.assign(track, patch);
     const total = this.total;
-    const wins = this.data.windows.filter(w => w.track === track.id).sort((a, b) => a.start - b.start);
     for (const w of wins) {
       const [, hi] = freeSpan(this.data, track.id, w.start, total, w.id);
       const len = snapLen(track.rule, w.len, hi - w.start) ?? snapLen(track.rule, w.len, total - w.start, 'down');
       if (len != null) this.setRange(w, w.start, len);
     }
-    if (shapeBefore !== trackAspect(track)) for (const w of wins) this.refitWindow(w, track);
+    for (const w of wins) if (shapeBefore.get(w) !== trackAspect(sizing(track, w))) this.refitWindow(w, track);
     this.resolveOverlaps(wins);
     this.store.commit();
   }

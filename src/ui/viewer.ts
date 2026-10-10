@@ -1,5 +1,5 @@
 import type { App } from '../app';
-import { cropAt, outputRegion, outputSizeFor, type Crop } from '../model/project';
+import { cropAt, outputRegion, outputSizeFor, sizing, type Crop } from '../model/project';
 import { cropCorners, rawToDisplay } from '../model/render';
 import { Tween, lerp } from './motion';
 
@@ -293,7 +293,7 @@ export class Viewer {
     ctx.strokeRect(-c.w / 2, -c.h / 2, c.w, c.h);
     ctx.setLineDash([]);
     // The part that reaches the output, when the side multiples or output shape trim the crop.
-    const track = w ? app.track(w.track)! : app.currentTrack;
+    const track = w ? sizing(app.track(w.track)!, w) : app.currentTrack;
     const c0 = w ? cropAt(w, 0) : c;
     const reg = outputRegion(c, c0, track);
     const trimmed = Math.abs(reg.w - c.w) > 0.05 || Math.abs(reg.h - c.h) > 0.05;

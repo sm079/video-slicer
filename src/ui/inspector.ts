@@ -1,6 +1,6 @@
 import type { App } from '../app';
 import {
-  cropAt, outputRegion, outputSize, outputSizeFor, snapLen, minLen, ruleText, RULE_PRESETS, COLORS, fullCrop,
+  cropAt, outputRegion, outputSize, outputSizeFor, sizing, refitCrop, trackAspect, snapLen, minLen, ruleText, RULE_PRESETS, COLORS, fullCrop,
   presetFrom, presetMatches, presetText, type Crop,
 } from '../model/project';
 import { formatFps, parseFps } from '../media/timebase';
@@ -97,7 +97,7 @@ export class Inspector {
     const a = this.app, w = a.selected, t = a.currentTrack;
     const common = [this.tab, a.media?.hash];
     const g = a.group(w?.id);
-    if (this.tab === 'window') return [...common, a.picked.join(), g?.wins.join(), g && a.data.groups.indexOf(g), w?.id, w?.track, w?.animate, w?.keys.map(k => k.f).join(), t.id, t.color, t.rule.a, t.rule.b, a.data.tracks.map(t => t.id + t.name).join()].join('|');
+    if (this.tab === 'window') return [...common, a.picked.join(), g?.wins.join(), g && a.data.groups.indexOf(g), w?.id, w?.track, w?.animate, !!w?.size, w?.keys.map(k => k.f).join(), t.id, t.color, t.rule.a, t.rule.b, a.data.tracks.map(t => t.id + t.name).join()].join('|');
     if (this.tab === 'track') return [...common, t.id, t.color, t.rule.a, t.rule.b, a.presets.map(p => p.name).join('\n'), this.saving, this.customRule, RULE_PRESETS.findIndex(p => sameRule(p.rule, t.rule))].join('|');
     return [...common, !!a.media?.demux.audio].join('|');
   }
@@ -174,6 +174,16 @@ export class Inspector {
           <label class="stack"><span class="lbl scrub" data-tip="Last frame" data-kbd="O">End</span><input id="win-end" type="number" min="0" step="1"></label>
         </div>
         <div class="times" id="win-times"></div>
+      </section>
+      <section class="group">
+        <div class="group-head">
+          <h3>Output size<span class="meta">${w.size ? 'this window' : 'from track'}</span></h3>
+          <div class="actions">${w.size ? iconBtn('size-track', 'reset', 'Use the track’s size') : ''}</div>
+        </div>
+        <div class="cols c2">
+          ${field('w-ow', 'W', { min: 0, placeholder: 'Auto', tip: 'Width · blank follows the crop' })}
+          ${field('w-oh', 'H', { min: 0, placeholder: 'Auto', tip: 'Height · blank follows the crop' })}
+        </div>
       </section>`;
       html += this.combineSection();
     } else {
@@ -257,8 +267,8 @@ export class Inspector {
       <section class="group">
         <div class="group-head"><h3>Output size</h3></div>
         <div class="cols c3">
-          ${field('t-ow', 'W', { min: 0, placeholder: 'Auto', tip: 'Width · blank follows the crop' })}
-          ${field('t-oh', 'H', { min: 0, placeholder: 'Auto', tip: 'Height · blank follows the crop' })}
+          ${field('t-ow', 'W', { min: 0, placeholder: 'Auto', tip: 'Width · blank follows the crop · windows with their own size keep it' })}
+          ${field('t-oh', 'H', { min: 0, placeholder: 'Auto', tip: 'Height · blank follows the crop · windows with their own size keep it' })}
           ${field('t-div', '÷', { min: 1, tip: 'Sides snap to a multiple of this (H.264 needs 2)' })}
         </div>
       </section>
@@ -338,6 +348,9 @@ export class Inspector {
         this.set('win-start', w.start);
         this.set('win-len', w.len);
         this.set('win-end', w.start + w.len - 1);
+        const ws = sizing(t, w);
+        this.set('w-ow', ws.outW || '');
+        this.set('w-oh', ws.outH || '');
         const secs = m.tb.time(w.start + w.len - 1) - m.tb.time(w.start) + 1 / m.tb.fps;
         this.text('win-times', `${timecode(m.tb.time(w.start))} – ${timecode(m.tb.time(w.start + w.len))} · ${secs.toFixed(2)} s`);
         this.attr('#win-len-lbl', 'data-tip', t.rule.a > 1 ? `Snaps to ${ruleText(t.rule)}` : null);
@@ -360,7 +373,8 @@ export class Inspector {
       if (c) {
         this.set('c-x', r1(c.x)); this.set('c-y', r1(c.y)); this.set('c-w', r1(c.w)); this.set('c-h', r1(c.h)); this.set('c-r', r1(c.r));
         const c0 = w ? cropAt(w, 0) : c;
-        const out = outputSizeFor(c0, t), reg = outputRegion(c, c0, t);
+        const ts = sizing(t, w);
+        const out = outputSizeFor(c0, ts), reg = outputRegion(c, c0, ts);
         const trimmed = Math.abs(reg.w - c.w) > 0.05 || Math.abs(reg.h - c.h) > 0.05;
         this.text('crop-out', `Output ${out.w} × ${out.h}`);
         this.attr('#crop-out', 'data-tip', trimmed ? `Taken from the centre ${r1(reg.w)} × ${r1(reg.h)} (dashed frame)` : null);
@@ -493,6 +507,12 @@ export class Inspector {
         if (v != null) a.updateTrack(t, { defLen: snapLen(t.rule, Math.max(1, Math.round(v))) ?? t.defLen });
         el.value = String(t.defLen);
         return;
+      case 'w-ow': case 'w-oh': {
+        if (!w) return;
+        const val = Math.max(0, Math.round(v ?? 0)), cur = sizing(t, w);
+        a.setWindowSize(w, { w: el.id === 'w-ow' ? val : cur.outW, h: el.id === 'w-oh' ? val : cur.outH });
+        return;
+      }
       case 't-ow': case 't-oh': case 't-div': {
         const val = Math.max(el.id === 't-div' ? 1 : 0, Math.round(v ?? 0));
         a.updateTrack(t, el.id === 't-ow' ? { outW: val } : el.id === 't-oh' ? { outH: val } : { div: val });
@@ -556,6 +576,7 @@ export class Inspector {
         break;
       }
       case 'reset-win': if (w) a.resetWindow(w); break;
+      case 'size-track': if (w) a.setWindowSize(w, null); break;
       case 'full': {
         const full = fullCrop(m.W, m.H, a.cropAspect());
         a.setCrop(c?.r ? { ...full, r: c.r } : full);
@@ -573,7 +594,12 @@ export class Inspector {
       case 't-apply': {
         if (!c) break;
         const n = a.data.windows.filter(o => o.track === t.id).length;
-        for (const o of a.data.windows) if (o.track === t.id) { o.keys = [{ f: 0, c: { ...c } }]; o.animate = false; }
+        for (const o of a.data.windows) {
+          if (o.track !== t.id) continue;
+          // Each window keeps its own output shape.
+          o.keys = [{ f: 0, c: refitCrop(c, m.W, m.H, trackAspect(sizing(t, o))) }];
+          o.animate = false;
+        }
         a.store.commit();
         a.toast(`Crop applied to ${n} window${n === 1 ? '' : 's'}`, 'success', { label: 'Undo', run: () => a.store.undo() });
         break;
@@ -623,7 +649,7 @@ export class OutputPreview {
       return;
     }
     box.classList.remove('empty');
-    const track = a.track(w.track)!;
+    const track = sizing(a.track(w.track)!, w);
     const out = outputSize(w, track);
     if (this.canvas.width !== out.w || this.canvas.height !== out.h) {
       this.canvas.width = out.w;
