@@ -42,6 +42,13 @@ export class Inspector {
     root.addEventListener('change', e => this.onChange(e.target as HTMLInputElement, true));
     root.addEventListener('input', e => this.onInput(e.target as HTMLInputElement));
     root.addEventListener('click', e => this.onClick(e));
+    // A field commits on change, which fires only when focus leaves it: after the press
+    // that moved focus has already been handled. Commit first, so an edit lands on the
+    // window and frame it was typed for, not the one the press selects or seeks to.
+    document.addEventListener('pointerdown', e => {
+      const f = document.activeElement;
+      if (f instanceof HTMLInputElement && root.contains(f) && !f.contains(e.target as Node)) f.blur();
+    }, { capture: true });
     root.addEventListener('keydown', e => {
       const t = e.target as HTMLInputElement;
       if (t.id === 'p-name' && (e.key === 'Enter' || e.key === 'Escape')) {
