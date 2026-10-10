@@ -395,10 +395,22 @@ export class App {
     }
     if (f === this.playhead) return;
     this.playhead = f;
+    this.selectAtPlayhead();
     if (this.play) { this.play.nextDue = performance.now() + 1000 / this.media!.tb.fps; this.startAudio(); }
     else this.saveSoon();
     this.updateWants();
     this.invalidate(true);
+  }
+
+  /** Select the topmost window under the playhead, unless a selected one already covers it. */
+  private selectAtPlayhead() {
+    const f = this.playhead;
+    const covers = (w: Win) => f >= w.start && f < w.start + w.len;
+    if (this.selection.some(covers)) return;
+    for (const t of this.data.tracks) {
+      const w = this.data.windows.find(w => w.track === t.id && covers(w));
+      if (w) { this.select(w.id); return; }
+    }
   }
 
   step(n: number) {
@@ -505,7 +517,7 @@ export class App {
       play.nextDue += dt;
       advanced = true;
     }
-    if (advanced) { this.updateWants(); this.uiDirty = true; }
+    if (advanced) { this.selectAtPlayhead(); this.updateWants(); this.uiDirty = true; }
     if (this.play) this.syncAudio(now);
   }
 
