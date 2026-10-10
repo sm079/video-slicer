@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, fitAspect, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
+  snapLen, minLen, isAllowed, cropAt, outputSize, outputRegion, sizing, fitAspect, normalizeCrop, fullCrop, fits, freeSpan, newTrack, emptyProject,
   sanitizeProject, combine, uncombine, cleanGroups, exportUnits, presetFrom, presetMatches, presetValues, sanitizePresets, PRESET_DEFAULTS, type Win, type Track,
 } from '../src/model/project.ts';
 import { Timebase, detectFps, parseFps } from '../src/media/timebase.ts';
@@ -38,6 +38,20 @@ test('output size', () => {
   assert.deepEqual(outputSize(w, t), { w: 992, h: 560 });
   assert.deepEqual(outputSize(w, { ...t, outW: 832, outH: 480 }), { w: 832, h: 480 });
   assert.deepEqual(outputSize(w, { ...t, outW: 496 }), { w: 496, h: 288 });
+});
+
+test('a window size replaces the track size for that window only', () => {
+  const t: Track = { ...newTrack(0), outW: 512, outH: 352 };
+  const a: Win = { id: 'a', track: t.id, start: 0, len: 10, animate: false, keys: [{ f: 0, c: crop(0, 0, 400, 400) }] };
+  const b: Win = { ...a, id: 'b', size: { w: 352, h: 512 } };
+  assert.deepEqual(outputSize(a, t), { w: 512, h: 352 });
+  assert.deepEqual(outputSize(b, t), { w: 352, h: 512 });
+  assert.equal(sizing(t, a), t, 'no size: the track itself');
+  assert.equal(t.outW, 512, 'track untouched');
+  assert.deepEqual(outputSize({ ...a, size: { w: 0, h: 0 } }, t), { w: 400, h: 400 }, 'zero sides follow the crop');
+  const data = sanitizeProject({ tracks: [t], windows: [b, a] });
+  assert.deepEqual(data.windows[0].size, { w: 352, h: 512 });
+  assert.equal('size' in data.windows[1], false);
 });
 
 test('normalizeCrop keeps crops valid', () => {

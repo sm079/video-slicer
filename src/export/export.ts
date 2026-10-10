@@ -2,7 +2,7 @@ import type { AudioCodec } from 'mediabunny';
 import type { App } from '../app';
 import { clipAudio, wav } from '../media/audio';
 import type { AudioInfo, Demux } from '../media/demux';
-import { cropAt, exportUnits, fitAspect, outputRegion, outputSize, type Group, type Track, type Win } from '../model/project';
+import { cropAt, exportUnits, fitAspect, outputRegion, outputSize, sizing, type Group, type Track, type Win } from '../model/project';
 import { renderOutput } from '../model/render';
 
 export type Format = 'mp4' | 'webm' | 'png';
@@ -252,7 +252,7 @@ export async function runExport(app: App, opts: ExportOptions, writer: Writer, p
     const parts: Record<string, unknown>[] = [];
     try {
       for (const w of segs) {
-        const track = app.track(w.track)!;
+        const track = sizing(app.track(w.track)!, w);
         const srcs = Array.from({ length: w.len }, (_, i) => tb.src(w.start + i));
         const decoded = decodeRange(demux, srcs[0], srcs[srcs.length - 1], signal);
         // Audio is the source audio from the window's first frame for exactly its duration,
